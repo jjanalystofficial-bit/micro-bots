@@ -346,11 +346,6 @@ async function handleSignup() {
   // Try Cloudflare Worker first
   let result = await apiRequest('api/users', 'POST', userData);
   
-  if (result.status === 'error' && result.offline) {
-    // Fallback to Apps Script
-    result = await appsScriptRequest('createUser', { userData });
-  }
-  
   if (result.status === 'success' || result.offline) {
     // Save to localStorage as backup
     users[phone] = userData;
@@ -1639,4 +1634,5 @@ function showSection(sectionId) {
       element.scrollIntoView({behavior: 'smooth'});
     }
   }, 100);
+
 }

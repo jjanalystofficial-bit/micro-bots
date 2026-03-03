@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sky Eats - Food Ordering System</title>
+  <link rel="icon" type="image/jpeg" href="favicon.jpeg">
+  <link rel="shortcut icon" href="favicon.ico">
+  <!-- EmailJS Library -->
+  <script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@3/dist/email.min.js"></script>
+<!-- EmailJS Initialization -->
+<script>
+  (function() {
+    try {
+      // Replace with your actual EmailJS public key
+      emailjs.init('86-3q2DtoKe08Yj1m');
+      console.log('EmailJS initialized');
+    } catch (error) {
+      console.error('EmailJS initialization failed:', error);
+    }
+  })();
+</script>
+
+  <!-- External CSS -->
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<!-- Loading Spinner -->
+<div id="loading-spinner" class="loading-spinner">
+  <div class="spinner"></div>
+</div>
+
+<!-- Session Warning -->
+<div id="session-warning" class="session-warning" style="display: none;">
+  Your session will expire in <span id="session-timer">2:00</span> minutes
+</div>
+
+<!-- Forgot Password Modal -->
+<div id="forgot-modal" class="forgot-modal">
+  <div class="forgot-container">
+    <span class="close-btn" onclick="closeForgotModal()">&times;</span>
+    <h2>🔐 Reset Password</h2>
+    <div id="forgot-step1">
+      <div class="form-group">
+        <label>Enter Your Phone Number</label>
+        <input type="tel" id="forgot-phone" placeholder="09123456789">
+      </div>
+      <div class="form-group">
+        <label>Enter Your Email Address</label>
+        <input type="email" id="forgot-email" placeholder="your@email.com">
+        <small style="color: #666; display: block; margin-top: 5px;">We'll send a password reset code to this email</small>
+      </div>
+      <button class="auth-btn" onclick="sendResetCode()">Send Reset Code</button>
+      <div id="forgot-message"></div>
+    </div>
+    
+    <div id="forgot-step2" style="display: none;">
+      <div class="form-group">
+        <label>Enter Verification Code</label>
+        <input type="text" id="verification-code" placeholder="6-digit code">
+      </div>
+      <div class="form-group">
+        <label>New Password</label>
+        <div class="password-field">
+          <input type="password" id="new-password" placeholder="********">
+          <span class="toggle-password" onclick="togglePassword('new-password')">👁️</span>
+        </div>
+      </div>
+      <div class="form-group">
+        <label>Confirm New Password</label>
+        <div class="password-field">
+          <input type="password" id="confirm-new-password" placeholder="********">
+          <span class="toggle-password" onclick="togglePassword('confirm-new-password')">👁️</span>
+        </div>
+      </div>
+      <button class="auth-btn" onclick="resetPassword()">Reset Password</button>
+      <button class="auth-btn secondary" onclick="backToStep1()">Back</button>
+    </div>
+  </div>
+</div>
+
+<!-- Auth Modal -->
+<div id="auth-modal" class="auth-modal">
+  <div class="auth-container">
+    <div class="auth-tabs">
+      <button class="auth-tab active" onclick="switchAuthTab('login')">Login</button>
+      <button class="auth-tab" onclick="switchAuthTab('signup')">Sign Up</button>
+    </div>
+    
+    <!-- Login Form -->
+    <div id="login-form" class="auth-form active">
+      <h2>Login to Order</h2>
+      <div class="form-group">
+        <label>Phone Number</label>
+        <input type="tel" id="login-phone" placeholder="09123456789">
+      </div>
+      <div class="form-group">
+        <label>Password</label>
+        <div class="password-field">
+          <input type="password" id="login-password" placeholder="********">
+          <span class="toggle-password" onclick="togglePassword('login-password')">👁️</span>
+        </div>
+      </div>
+      <button class="auth-btn" onclick="handleLogin()">Login</button>
+      <div class="forgot-password-link">
+        <a onclick="showForgotPassword()">Forgot Password?</a>
+      </div>
+    </div>
+    
+    <!-- Signup Form -->
+    <div id="signup-form" class="auth-form">
+      <h2>Create Account</h2>
+      <div class="form-group">
+        <label>Full Name</label>
+        <input type="text" id="signup-name" placeholder="John Doe">
+      </div>
+      <div class="form-group">
+        <label>Phone Number</label>
+        <input type="tel" id="signup-phone" placeholder="09123456789">
+      </div>
+      <div class="form-group">
+        <label>Email Address (for password recovery)</label>
+        <input type="email" id="signup-email" placeholder="your@email.com">
+      </div>
+      <div class="form-group">
+        <label>Address</label>
+        <input type="text" id="signup-address" placeholder="Street, City">
+      </div>
+      <div class="form-group">
+        <label>City</label>
+        <select id="signup-city">
+          <option value="" disabled selected>Select City</option>
+          <option value="30">Mandaluyong City</option>
+          <option value="50">Makati City</option>
+          <option value="50">Pasig City</option>
+          <option value="50">San Juan City</option>
+          <option value="50">Manila</option>
+          <option value="70">Taguig</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Password</label>
+        <div class="password-field">
+          <input type="password" id="signup-password" placeholder="********">
+          <span class="toggle-password" onclick="togglePassword('signup-password')">👁️</span>
+        </div>
+      </div>
+      <div class="form-group">
+        <label>Confirm Password</label>
+        <div class="password-field">
+          <input type="password" id="signup-confirm-password" placeholder="********">
+          <span class="toggle-password" onclick="togglePassword('signup-confirm-password')">👁️</span>
+        </div>
+        <div id="password-error" class="error-message"></div>
+      </div>
+      <button class="auth-btn" onclick="handleSignup()">Sign Up</button>
+    </div>
+  </div>
+</div>
+
+<!-- Sidebar -->
+<div class="sidebar">
+  <h2>Sky Eats</h2>
+  
+  <!-- User Info (shown when logged in) -->
+  <div id="user-info-sidebar" class="user-info-sidebar" style="display: none;">
+    <p id="sidebar-user-name"></p>
+    <p id="sidebar-user-phone"></p>
+    <button onclick="logout()">🚪 Logout</button>
+  </div>
+  
+  <ul>
+    <li onclick="showSection('all')">📋 All Products</li>
+    <li onclick="showSection('chicken')">🍗 Chicken Wings</li>
+    <li onclick="showSection('sisig')">🥘 Sisig</li>
+    <li onclick="showSection('ricemeal')">🍚 Rice Meals</li>
+    <li onclick="showSection('drinks')">🥤 Drinks</li>
+    <li onclick="showSection('snacks')">🍟 Snacks</li>
+    <li onclick="showOrderHistory()" id="history-link" style="display: none;">📜 Order History</li>
+    <li onclick="showAdminPanel()" id="admin-link" style="display: none;">👑 Admin Panel</li>
+    <li onclick="showStockManagement()" id="stock-link" style="display: none;">📦 Stock & Promo</li>
+  </ul>
+
+  <!-- Cart Box -->
+  <div class="cart-box">
+    <h3>🛒 Your Cart</h3>
+    <ul id="cart-items">
+      <li>No items yet</li>
+    </ul>
+    <div class="cart-total">
+      <div>Subtotal: ₱<span id="cart-subtotal">0</span></div>
+      <div>Delivery: ₱<span id="delivery-fee">0</span></div>
+      <div style="font-size: 16px; margin-top: 5px;">Total: ₱<span id="cart-total">0</span></div>
+    </div>
+    <div id="total-pay-msg" style="font-weight:bold; color:#c62828; margin-bottom:10px;"></div>
+
+    <h4>📝 Delivery Info</h4>
+    <form id="checkout-form" onsubmit="event.preventDefault()">
+      <input type="text" id="cust-name" placeholder="Full Name" readonly>
+      <input type="text" id="cust-contact" placeholder="Contact Number" readonly>
+      <select id="cust-city" disabled>
+        <option value="" disabled selected>Select City</option>
+        <option value="30">Mandaluyong City (₱30)</option>
+        <option value="50">Makati City (₱50)</option>
+        <option value="50">Pasig City (₱50)</option>
+        <option value="50">San Juan City (₱50)</option>
+        <option value="50">Manila (₱50)</option>
+        <option value="70">Taguig (₱70)</option>
+      </select>
+      <input type="text" id="cust-address" placeholder="Street/Building/Unit" readonly>
+      <button type="button" id="place-order" disabled>🔒 Login to Order</button>
+    </form>
+  </div>
+</div>
+
+<!-- Review Modal -->
+<div id="review-modal" class="review-modal">
+  <div class="review-content">
+    <h3>📋 Review Your Order</h3>
+    <div id="review-details"></div>
+    <div style="display: flex; gap: 10px; margin-top: 20px;">
+      <button id="edit-order">✏️ Edit Order</button>
+      <button id="confirm-order">✅ Confirm Order</button>
+    </div>
+  </div>
+</div>
+
+<!-- Main Content -->
+<div class="main">
+  <header>
+    <span>Sky Eats Restaurant</span>
+    <button id="logout-btn" onclick="logout()" style="display: none;">Logout</button>
+  </header>
+  
+  <div id="content-area">
+    <!-- Menu sections will be loaded here by JavaScript -->
+    <div id="all" class="section-title">📋 All Products</div>
+    <div class="menu-container" id="all-products"></div>
+
+    <div id="chicken" class="section-title">🍗 Chicken Wings</div>
+    <div class="menu-container" id="chicken-products"></div>
+
+    <div id="sisig" class="section-title">🥘 Sisig</div>
+    <div class="menu-container" id="sisig-products"></div>
+
+    <div id="ricemeal" class="section-title">🍚 Rice Meals</div>
+    <div class="menu-container" id="ricemeal-products"></div>
+
+    <div id="drinks" class="section-title">🥤 Drinks</div>
+    <div class="menu-container" id="drinks-products"></div>
+
+    <div id="snacks" class="section-title">🍟 Snacks</div>
+    <div class="menu-container" id="snacks-products"></div>
+  </div>
+</div>
+
+<!-- External JavaScript -->
+<script src="script.js"></script>
+</body>
+</html>

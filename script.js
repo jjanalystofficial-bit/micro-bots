@@ -243,9 +243,8 @@ async function apiRequest(endpoint, method = 'GET', data = null) {
   }
 }
 
-/**
- * Make request to Apps Script (direct fallback)
- */
+// ==================== APPS SCRIPT REQUEST (DISABLED - KEPT FOR REFERENCE) ====================
+/*
 async function appsScriptRequest(action, data = {}) {
   showLoading();
   try {
@@ -272,6 +271,7 @@ async function appsScriptRequest(action, data = {}) {
     return { status: 'error', message: error.message };
   }
 }
+*/
 
 /**
  * Test API connection
@@ -279,28 +279,16 @@ async function appsScriptRequest(action, data = {}) {
 async function testAPIConnection() {
   console.log('🔍 Testing API connections...');
   
-  // Test Cloudflare Worker
+  // Test Cloudflare Worker only
   try {
     const workerTest = await apiRequest('test', 'GET');
-    if (workerTest.status === 'ok') {
+    if (workerTest.status === 'success') {
       console.log('✅ Cloudflare Worker connected');
     } else {
       console.warn('⚠️ Cloudflare Worker test failed');
     }
   } catch (error) {
     console.warn('⚠️ Cloudflare Worker not reachable');
-  }
-  
-  // Test Apps Script
-  try {
-    const scriptTest = await appsScriptRequest('test');
-    if (scriptTest.status === 'success') {
-      console.log('✅ Apps Script connected');
-    } else {
-      console.warn('⚠️ Apps Script test failed');
-    }
-  } catch (error) {
-    console.warn('⚠️ Apps Script not reachable');
   }
 }
 
@@ -347,6 +335,9 @@ async function handleSignup() {
   let result = await apiRequest('api/users', 'POST', userData);
   
   if (result.status === 'success' || result.offline) {
+    // Format phone number before saving to localStorage
+    userData.phone = userData.phone.toString().padStart(11, '0');
+    
     // Save to localStorage as backup
     users[phone] = userData;
     localStorage.setItem('users', JSON.stringify(users));
@@ -355,7 +346,7 @@ async function handleSignup() {
     sessionStorage.setItem('currentUser', JSON.stringify(currentUser));
     
     document.getElementById('cust-name').value = name;
-    document.getElementById('cust-contact').value = phone;
+    document.getElementById('cust-contact').value = userData.phone;
     document.getElementById('cust-address').value = address;
     document.getElementById('cust-city').value = city;
     
@@ -383,15 +374,13 @@ async function handleLogin() {
   // Try Cloudflare Worker first
   let result = await apiRequest(`api/users?phone=${phone}`, 'GET');
   
-  if (result.status === 'error' && result.offline) {
-    // Fallback to Apps Script login
-    result = await appsScriptRequest('login', { phone, password });
-  }
-  
-  if (result.status === 'success' && result.user) {
-    const user = result.user;
+  if (result.status === 'success' && result.data) {
+    const user = result.data;
     
-    if (user.password === password || result.status === 'success') {
+    // Format phone number correctly (add leading zero if needed)
+    user.phone = user.phone.toString().padStart(11, '0');
+    
+    if (user.password === password) {
       currentUser = user;
       sessionStorage.setItem('currentUser', JSON.stringify(currentUser));
       
@@ -413,6 +402,9 @@ async function handleLogin() {
     // Fallback to localStorage
     const user = users[phone];
     if (user && user.password === password) {
+      // Format phone in localStorage too
+      user.phone = user.phone.toString().padStart(11, '0');
+      
       currentUser = user;
       sessionStorage.setItem('currentUser', JSON.stringify(currentUser));
       
@@ -725,14 +717,6 @@ async function resetPassword() {
       phone: phone,
       password: newPassword
     });
-    
-    if (updateResult.status === 'error' && updateResult.offline) {
-      // Fallback to Apps Script
-      updateResult = await appsScriptRequest('updatePassword', {
-        phone,
-        newPassword
-      });
-    }
     
     if (updateResult.status === 'success') {
       // Update localStorage
@@ -1161,8 +1145,11 @@ function placeOrder() {
  * Confirm and submit order
  */
 async function confirmOrder() {
+  // Format customer phone before sending
+  const formattedPhone = currentUser.phone.toString().padStart(11, '0');
+  
   const order = {
-    customerPhone: currentUser.phone,
+    customerPhone: formattedPhone,
     customerName: currentUser.name,
     items: cart.map(item => ({
       name: item.name,
@@ -1181,11 +1168,6 @@ async function confirmOrder() {
   
   // Try Cloudflare Worker first
   let result = await apiRequest('api/orders', 'POST', order);
-  
-  if (result.status === 'error' && result.offline) {
-    // Fallback to Apps Script
-    result = await appsScriptRequest('createOrder', { orderData: order });
-  }
   
   if (result.status === 'success' || result.offline) {
     // Save to localStorage
@@ -1634,5 +1616,4 @@ function showSection(sectionId) {
       element.scrollIntoView({behavior: 'smooth'});
     }
   }, 100);
-
 }

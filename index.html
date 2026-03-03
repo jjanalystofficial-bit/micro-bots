@@ -8,19 +8,17 @@
   <link rel="shortcut icon" href="favicon.ico">
   <!-- EmailJS Library -->
   <script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@3/dist/email.min.js"></script>
-<!-- EmailJS Initialization -->
-<script>
-  (function() {
-    try {
-      // Replace with your actual EmailJS public key
-      emailjs.init('86-3q2DtoKe08Yj1m');
-      console.log('EmailJS initialized');
-    } catch (error) {
-      console.error('EmailJS initialization failed:', error);
-    }
-  })();
-</script>
-
+  <!-- EmailJS Initialization -->
+  <script>
+    (function() {
+      try {
+        emailjs.init('86-3q2DtoKe08Yj1m');
+        console.log('✅ EmailJS initialized');
+      } catch (error) {
+        console.error('❌ EmailJS initialization failed:', error);
+      }
+    })();
+  </script>
   <!-- External CSS -->
   <link rel="stylesheet" href="styles.css">
 </head>

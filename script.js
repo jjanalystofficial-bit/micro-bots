@@ -337,6 +337,8 @@ async function handleSignup() {
   if (result.status === 'success' || result.offline) {
     // Format phone number before saving to localStorage
     userData.phone = userData.phone.toString().padStart(11, '0');
+    // Format city as string
+    userData.city = userData.city.toString();
     
     // Save to localStorage as backup
     users[phone] = userData;
@@ -348,7 +350,7 @@ async function handleSignup() {
     document.getElementById('cust-name').value = name;
     document.getElementById('cust-contact').value = userData.phone;
     document.getElementById('cust-address').value = address;
-    document.getElementById('cust-city').value = city;
+    document.getElementById('cust-city').value = userData.city;
     
     hideAuthModal();
     updateUIForLoggedInUser();
@@ -379,6 +381,8 @@ async function handleLogin() {
     
     // Format phone number correctly (add leading zero if needed)
     user.phone = user.phone.toString().padStart(11, '0');
+    // Format city as string
+    user.city = user.city.toString();
     
     if (user.password === password) {
       currentUser = user;
@@ -404,6 +408,7 @@ async function handleLogin() {
     if (user && user.password === password) {
       // Format phone in localStorage too
       user.phone = user.phone.toString().padStart(11, '0');
+      user.city = user.city.toString();
       
       currentUser = user;
       sessionStorage.setItem('currentUser', JSON.stringify(currentUser));
@@ -1145,8 +1150,9 @@ function placeOrder() {
  * Confirm and submit order
  */
 async function confirmOrder() {
-  // Format customer phone before sending
+  // Format customer phone and city before sending
   const formattedPhone = currentUser.phone.toString().padStart(11, '0');
+  const formattedCity = currentUser.city.toString();
   
   const order = {
     customerPhone: formattedPhone,
@@ -1161,7 +1167,7 @@ async function confirmOrder() {
     deliveryFee: getDeliveryFee(),
     total: calculateSubtotal() + getDeliveryFee(),
     address: document.getElementById("cust-address").value.trim(),
-    city: document.getElementById("cust-city").options[document.getElementById("cust-city").selectedIndex]?.text,
+    city: formattedCity,
     status: 'pending',
     timestamp: new Date().toISOString()
   };

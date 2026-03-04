@@ -22,6 +22,7 @@ let resetCodes = {};
 let AUDIO_ENABLED = true;
 let newOrderAudio = null;
 let notificationCheckerInterval = null;
+let adminSyncInterval = null;
 
 // Load sound preference
 const savedSound = localStorage.getItem('soundEnabled');
@@ -217,6 +218,50 @@ window.resetPassword = resetPassword;
 let cartItems, cartSubtotalSpan, deliveryFeeSpan, cartTotalSpan, citySelect, placeOrderBtn;
 let reviewModal, reviewDetails, editOrderBtn, confirmOrderBtn, totalPayMsg;
 
+// ==================== SERVER SYNC FUNCTIONS ====================
+
+/**
+ * Fetch latest orders from server
+ */
+async function fetchOrdersFromServer() {
+    try {
+        console.log('📡 Fetching orders from server...');
+        const result = await apiRequest('api/orders', 'GET');
+        
+        if (result.status === 'success' && result.data) {
+            // Update global orders array
+            orders = result.data;
+            // Update localStorage as backup
+            localStorage.setItem('orders', JSON.stringify(orders));
+            console.log(`✅ Fetched ${orders.length} orders from server`);
+            return true;
+        } else {
+            console.warn('⚠️ Failed to fetch orders:', result);
+            return false;
+        }
+    } catch (error) {
+        console.error('❌ Error fetching orders:', error);
+        return false;
+    }
+}
+
+/**
+ * Initialize orders on page load
+ */
+async function initializeOrders() {
+    // First try to get from server
+    const success = await fetchOrdersFromServer();
+    
+    if (!success) {
+        // Fallback to localStorage
+        const localOrders = localStorage.getItem('orders');
+        if (localOrders) {
+            orders = JSON.parse(localOrders);
+            console.log(`📦 Loaded ${orders.length} orders from localStorage (fallback)`);
+        }
+    }
+}
+
 // ==================== INITIALIZATION ====================
 document.addEventListener('DOMContentLoaded', async function() {
   console.log('🚀 SkyEats Initializing...');
@@ -260,6 +305,10 @@ document.addEventListener('DOMContentLoaded', async function() {
   // Initialize stock from localStorage or set defaults
   initializeStock();
   
+  // ===== FETCH ORDERS FROM SERVER ON PAGE LOAD =====
+  await initializeOrders();
+  // =================================================
+  
   renderMenuItems();
   
   // Check if user is logged in
@@ -298,6 +347,21 @@ document.addEventListener('DOMContentLoaded', async function() {
       closeForgotModal();
     }
   });
+
+  // ===== LISTEN FOR NEW ORDERS FROM OTHER TABS =====
+  window.addEventListener('storage', function(e) {
+      if (e.key === 'newOrderAlert' && currentUser?.isAdmin) {
+          console.log('🔔 New order detected in another tab!');
+          const pending = localStorage.getItem('pendingNewOrder');
+          if (pending) {
+              const orderData = JSON.parse(pending);
+              startNewOrderNotification();
+              showNewOrderConfirmation(orderData);
+              localStorage.removeItem('pendingNewOrder');
+          }
+      }
+  });
+  // =================================================
 
   updateCartDisplay();
   
@@ -617,6 +681,12 @@ function logout() {
     notificationCheckerInterval = null;
   }
   
+  // Stop admin sync
+  if (adminSyncInterval) {
+    clearInterval(adminSyncInterval);
+    adminSyncInterval = null;
+  }
+  
   currentUser = null;
   sessionStorage.removeItem('currentUser');
   cart = [];
@@ -673,6 +743,39 @@ function startNotificationChecker() {
 }
 
 /**
+ * Start periodic sync for admin
+ */
+function startAdminSync() {
+    // Clear existing interval if any
+    if (adminSyncInterval) {
+        clearInterval(adminSyncInterval);
+    }
+    
+    // Sync orders every 15 seconds
+    adminSyncInterval = setInterval(async () => {
+        if (currentUser?.isAdmin) {
+            const oldCount = orders.length;
+            await fetchOrdersFromServer();
+            
+            // If new orders came in and admin panel is open, refresh it
+            if (orders.length > oldCount && 
+                document.getElementById('content-area').innerHTML.includes('Admin Panel')) {
+                showAdminPanel();
+                
+                // Check for pending notification
+                const pending = localStorage.getItem('pendingNewOrder');
+                if (pending) {
+                    const orderData = JSON.parse(pending);
+                    startNewOrderNotification();
+                    showNewOrderConfirmation(orderData);
+                    localStorage.removeItem('pendingNewOrder');
+                }
+            }
+        }
+    }, 15000); // Every 15 seconds
+}
+
+/**
  * Update UI for logged in user
  */
 function updateUIForLoggedInUser() {
@@ -696,6 +799,8 @@ function updateUIForLoggedInUser() {
       console.log('🔔 Sound button SHOWN (admin)');
       // Start notification checker for admin
       startNotificationChecker();
+      // Start admin sync
+      startAdminSync();
     } else {
       soundControl.style.display = 'none';  // Hide for regular users
       console.log('🔇 Sound button HIDDEN (regular user)');
@@ -1427,42 +1532,31 @@ async function confirmOrder() {
     orders.push(localOrder);
     localStorage.setItem('orders', JSON.stringify(orders));
     
-    // ===== 🔔 FIXED: ALWAYS trigger notification for admin, regardless of which page they're on =====
+    // ===== 🔔 FIXED: ALWAYS trigger notification for admin =====
     const isAdmin = currentUser?.isAdmin === true || currentUser?.isAdmin === 'true';
     
+    // Always store pending notification for any admin
+    const pendingOrder = {
+      orderId: localOrder.id.toString().slice(-6),
+      customerName: localOrder.customerName,
+      total: localOrder.total,
+      items: localOrder.items.length,
+      timestamp: Date.now()
+    };
+    
+    localStorage.setItem('pendingNewOrder', JSON.stringify(pendingOrder));
+    
+    // If current user is admin, show notification immediately
     if (isAdmin) {
-      // If admin is placing order, notify immediately with a popup that appears NOW
       setTimeout(() => {
         startNewOrderNotification();
-        showNewOrderConfirmation({
-          orderId: localOrder.id.toString().slice(-6),
-          customerName: localOrder.customerName,
-          total: localOrder.total,
-          items: localOrder.items.length
-        });
-      }, 500); // Small delay to ensure order is saved first
-    } else {
-      // For customer orders, store for when admin logs in
-      localStorage.setItem('pendingNewOrder', JSON.stringify({
-        orderId: localOrder.id.toString().slice(-6),
-        customerName: localOrder.customerName,
-        total: localOrder.total,
-        items: localOrder.items.length,
-        timestamp: Date.now()
-      }));
-      
-      // Also trigger notification if admin is currently logged in (maybe they're on another tab)
-      if (currentUser && (currentUser.isAdmin === true || currentUser.isAdmin === 'true')) {
-        startNewOrderNotification();
-        showNewOrderConfirmation({
-          orderId: localOrder.id.toString().slice(-6),
-          customerName: localOrder.customerName,
-          total: localOrder.total,
-          items: localOrder.items.length
-        });
-      }
+        showNewOrderConfirmation(pendingOrder);
+      }, 500);
     }
-    // ==============================================
+    
+    // Trigger cross-tab notification
+    localStorage.setItem('newOrderAlert', Date.now().toString());
+    // ============================================================
     
     // Update local stock
     cart.forEach(cartItem => {
@@ -1488,7 +1582,7 @@ async function confirmOrder() {
 }
 
 /**
- * Check for pending new order when admin panel opens
+ * Check for pending new order
  */
 function checkForPendingNewOrder() {
     const pending = localStorage.getItem('pendingNewOrder');
@@ -1579,80 +1673,136 @@ function renderOrderStatusTracker(order) {
 // ==================== ADMIN FUNCTIONS ====================
 
 /**
- * Show admin panel
+ * Show admin panel - FETCHES FROM SERVER
  */
-function showAdminPanel() {
+async function showAdminPanel() {
   if (!currentUser || !currentUser.isAdmin) return;
   
-  // Check for pending new orders
-  checkForPendingNewOrder();
+  showLoading();
   
-  let adminHTML = '<div class="admin-panel">';
-  adminHTML += '<button class="back-btn" onclick="showSection(\'all\')">← Back to Menu</button>';
-  adminHTML += '<div class="admin-header"><h2>👑 Admin Panel - Manage Orders</h2>';
-  adminHTML += '<button onclick="showStockManagement()">📦 Manage Stock & Promo</button>';
-  adminHTML += '</div>';
-  
-  if (orders.length === 0) {
-    adminHTML += '<p style="text-align:center; padding:50px;">No orders yet</p>';
-  } else {
-    adminHTML += '<div class="orders-table"><table>';
-    adminHTML += '<tr><th>Order ID</th><th>Customer</th><th>Items</th><th>Total</th><th>Status</th><th>Actions</th><th>Time</th></tr>';
+  try {
+    // ===== FETCH LATEST ORDERS FROM SERVER =====
+    console.log('📡 Fetching orders from server...');
+    const result = await apiRequest('api/orders', 'GET');
     
-    [...orders].reverse().forEach(order => {
-      const statusInfo = orderStatusSequence.find(s => s.key === order.status);
-      let statusClass = `status-${order.status}`;
-      
-      const currentIndex = orderStatusSequence.findIndex(s => s.key === order.status);
-      const nextStatuses = orderStatusSequence.slice(currentIndex + 1);
-      
-      let actionButtons = '';
-      if (nextStatuses.length > 0) {
-        actionButtons = nextStatuses.map(s => 
-          `<button class="update-status-btn" onclick="updateOrderStatus(${order.id}, '${s.key}')">${s.label}</button>`
-        ).join('');
-      } else {
-        actionButtons = '<span style="color:#999;">Completed</span>';
-      }
-      
-      adminHTML += `
-        <tr>
-          <td>#${order.id?.toString().slice(-6) || 'N/A'}</td>
-          <td>${order.customerName}<br><small>${order.customerPhone}</small></td>
-          <td>${order.items.map(i => `${i.qty}x ${i.name}`).join('<br>')}</td>
-          <td>₱${order.total}</td>
-          <td><span class="status-badge ${statusClass}">${statusInfo?.label || order.status}</span></td>
-          <td>${actionButtons}</td>
-          <td>${new Date(order.timestamp).toLocaleString()}</td>
-        </tr>
-      `;
-    });
+    if (result.status === 'success' && result.data) {
+      // Update global orders array with server data
+      orders = result.data;
+      // Update localStorage as backup
+      localStorage.setItem('orders', JSON.stringify(orders));
+      console.log(`✅ Loaded ${orders.length} orders from server`);
+    }
+    // ===========================================
     
-    adminHTML += '</table></div>';
+    // Check for pending new orders
+    checkForPendingNewOrder();
+    
+    let adminHTML = '<div class="admin-panel">';
+    adminHTML += '<button class="back-btn" onclick="showSection(\'all\')">← Back to Menu</button>';
+    adminHTML += '<div class="admin-header">';
+    adminHTML += '<h2>👑 Admin Panel - Manage Orders</h2>';
+    adminHTML += '<div>';
+    adminHTML += '<button onclick="showStockManagement()">📦 Manage Stock & Promo</button>';
+    adminHTML += '<button onclick="refreshOrders()" style="margin-left:10px; background: #87ceeb;">🔄 Refresh</button>';
+    adminHTML += '</div>';
+    adminHTML += '</div>';
+    
+    if (orders.length === 0) {
+      adminHTML += '<p style="text-align:center; padding:50px;">No orders yet</p>';
+    } else {
+      adminHTML += '<div class="orders-table"><table>';
+      adminHTML += '<tr><th>Order ID</th><th>Customer</th><th>Items</th><th>Total</th><th>Status</th><th>Actions</th><th>Time</th></tr>';
+      
+      [...orders].reverse().forEach(order => {
+        const statusInfo = orderStatusSequence.find(s => s.key === order.status);
+        let statusClass = `status-${order.status}`;
+        
+        const currentIndex = orderStatusSequence.findIndex(s => s.key === order.status);
+        const nextStatuses = orderStatusSequence.slice(currentIndex + 1);
+        
+        let actionButtons = '';
+        if (nextStatuses.length > 0) {
+          actionButtons = nextStatuses.map(s => 
+            `<button class="update-status-btn" onclick="updateOrderStatus('${order.id}', '${s.key}')">${s.label}</button>`
+          ).join('');
+        } else {
+          actionButtons = '<span style="color:#999;">Completed</span>';
+        }
+        
+        adminHTML += `
+          <tr>
+            <td>#${order.id?.toString().slice(-6) || 'N/A'}</td>
+            <td>${order.customerName}<br><small>${order.customerPhone}</small></td>
+            <td>${order.items.map(i => `${i.qty}x ${i.name}`).join('<br>')}</td>
+            <td>₱${order.total}</td>
+            <td><span class="status-badge ${statusClass}">${statusInfo?.label || order.status}</span></td>
+            <td>${actionButtons}</td>
+            <td>${new Date(order.timestamp).toLocaleString()}</td>
+          </tr>
+        `;
+      });
+      
+      adminHTML += '</table></div>';
+    }
+    
+    adminHTML += '</div>';
+    document.getElementById('content-area').innerHTML = adminHTML;
+  } catch (error) {
+    console.error('Error loading admin panel:', error);
+    alert('Error loading orders. Please try again.');
+  } finally {
+    hideLoading();
   }
-  
-  adminHTML += '</div>';
-  document.getElementById('content-area').innerHTML = adminHTML;
 }
 
 /**
- * Update order status
+ * Refresh orders manually
  */
-function updateOrderStatus(orderId, newStatus) {
+async function refreshOrders() {
+  await showAdminPanel();
+}
+
+/**
+ * Update order status - SYNC WITH SERVER
+ */
+async function updateOrderStatus(orderId, newStatus) {
   const order = orders.find(o => o.id === orderId);
-  if (order) {
-    const oldStatus = order.status;
-    order.status = newStatus;
-    localStorage.setItem('orders', JSON.stringify(orders));
+  if (!order) return false;
+  
+  const oldStatus = order.status;
+  
+  try {
+    showLoading();
     
-    if (document.getElementById('content-area').innerHTML.includes('Admin Panel')) {
-      showAdminPanel();
+    // Update on server first
+    const result = await apiRequest('api/orders', 'PUT', {
+      id: orderId,
+      status: newStatus
+    });
+    
+    if (result.status === 'success') {
+      // Update local copy
+      order.status = newStatus;
+      localStorage.setItem('orders', JSON.stringify(orders));
+      
+      // Refresh admin panel if open
+      if (document.getElementById('content-area').innerHTML.includes('Admin Panel')) {
+        await showAdminPanel();
+      }
+      
+      alert(`✅ Order status updated to ${getStatusLabel(newStatus)}`);
+      return true;
+    } else {
+      alert('❌ Failed to update status on server');
+      return false;
     }
-    
-    alert(`✅ Order status updated to ${getStatusLabel(newStatus)}`);
-    return true;
+  } catch (error) {
+    console.error('Error updating order status:', error);
+    alert('❌ Network error. Please try again.');
+    return false;
+  } finally {
+    hideLoading();
   }
-  return false;
 }
 
 /**

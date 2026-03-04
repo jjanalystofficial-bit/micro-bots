@@ -24,6 +24,11 @@ let newOrderAudio = null;
 let notificationCheckerInterval = null;
 let adminSyncInterval = null;
 
+// ===== NEW: Notification polling variables =====
+let notificationPollingInterval = null;
+let lastNotificationCheck = new Date(0).toISOString();
+// ==============================================
+
 // Load sound preference
 const savedSound = localStorage.getItem('soundEnabled');
 if (savedSound !== null) {
@@ -99,7 +104,7 @@ function stopNotification() {
  */
 function showNewOrderConfirmation(orderData) {
     const message = `🛵 NEW ORDER RECEIVED!\n\n` +
-                    `Order #${orderData.orderId}\n` +
+                    `Order #${orderData.displayId || orderData.orderId}\n` +
                     `Customer: ${orderData.customerName}\n` +
                     `Total: ₱${orderData.total}\n` +
                     `Items: ${orderData.items} item(s)\n\n` +
@@ -245,6 +250,162 @@ async function fetchOrdersFromServer() {
     }
 }
 
+// ===== NEW: Stale order cleanup function =====
+/**
+ * Clean up orders that exist in localStorage but not in server
+ */
+async function cleanupStaleOrders() {
+    if (!currentUser?.isAdmin) return;
+    
+    try {
+        const result = await apiRequest('api/orders', 'GET');
+        
+        if (result.status === 'success' && result.data) {
+            const serverOrders = result.data;
+            const serverIds = new Set(serverOrders.map(o => o.id || o.orderId));
+            
+            const localOrders = JSON.parse(localStorage.getItem('orders') || '[]');
+            const staleOrders = localOrders.filter(order => {
+                const orderId = order.id || order.orderId;
+                return !serverIds.has(orderId);
+            });
+            
+            if (staleOrders.length > 0) {
+                console.log(`🧹 Removing ${staleOrders.length} stale orders from localStorage`);
+                
+                // Keep only orders that exist on server
+                const freshOrders = localOrders.filter(order => {
+                    const orderId = order.id || order.orderId;
+                    return serverIds.has(orderId);
+                });
+                
+                localStorage.setItem('orders', JSON.stringify(freshOrders));
+                orders = freshOrders;
+                
+                // Refresh admin panel if open
+                if (document.getElementById('content-area').innerHTML.includes('Admin Panel')) {
+                    showAdminPanel();
+                }
+            }
+        }
+    } catch (error) {
+        console.error('Error cleaning up stale orders:', error);
+    }
+}
+// =============================================
+
+// ===== NEW: Server notification functions =====
+/**
+ * Store notification on server
+ */
+async function storeNotificationOnServer(notification) {
+    try {
+        console.log('📡 Storing notification on server:', notification);
+        const result = await apiRequest('api/notifications', 'POST', notification);
+        return result.status === 'success';
+    } catch (error) {
+        console.error('❌ Failed to store notification on server:', error);
+        return false;
+    }
+}
+
+/**
+ * Fetch pending notifications from server
+ */
+async function fetchNotificationsFromServer(since = null, phone = null) {
+    try {
+        let url = 'api/notifications';
+        const params = [];
+        if (since) params.push(`since=${encodeURIComponent(since)}`);
+        if (phone) params.push(`phone=${encodeURIComponent(phone)}`);
+        if (params.length > 0) url += '?' + params.join('&');
+        
+        const result = await apiRequest(url, 'GET');
+        
+        if (result.status === 'success' && result.notifications) {
+            return result.notifications;
+        }
+        return [];
+    } catch (error) {
+        console.error('❌ Failed to fetch notifications:', error);
+        return [];
+    }
+}
+
+/**
+ * Clear notifications on server
+ */
+async function clearNotificationsOnServer(phone = null) {
+    try {
+        let url = 'api/notifications';
+        if (phone) url += `?phone=${encodeURIComponent(phone)}`;
+        
+        const result = await apiRequest(url, 'DELETE');
+        return result.status === 'success';
+    } catch (error) {
+        console.error('❌ Failed to clear notifications:', error);
+        return false;
+    }
+}
+
+/**
+ * Start notification polling
+ */
+function startNotificationPolling() {
+    if (notificationPollingInterval) {
+        clearInterval(notificationPollingInterval);
+    }
+    
+    console.log('🔔 Starting notification polling...');
+    
+    notificationPollingInterval = setInterval(async () => {
+        if (currentUser?.isAdmin) {
+            const notifications = await fetchNotificationsFromServer(lastNotificationCheck);
+            
+            if (notifications.length > 0) {
+                console.log(`🔔 Found ${notifications.length} new notification(s)`);
+                
+                // Process each notification
+                for (const notification of notifications) {
+                    // Prevent duplicate notifications
+                    const shownKey = `notification_shown_${notification.id}`;
+                    if (!localStorage.getItem(shownKey)) {
+                        startNewOrderNotification();
+                        showNewOrderConfirmation({
+                            displayId: notification.orderId,
+                            fullOrderId: notification.fullOrderId,
+                            customerName: notification.customerName,
+                            total: notification.total,
+                            items: notification.items
+                        });
+                        
+                        // Mark as shown (expires in 1 hour)
+                        localStorage.setItem(shownKey, 'true');
+                        setTimeout(() => {
+                            localStorage.removeItem(shownKey);
+                        }, 3600000);
+                    }
+                }
+                
+                // Update last check time
+                lastNotificationCheck = new Date().toISOString();
+            }
+        }
+    }, 5000); // Check every 5 seconds
+}
+
+/**
+ * Stop notification polling
+ */
+function stopNotificationPolling() {
+    if (notificationPollingInterval) {
+        clearInterval(notificationPollingInterval);
+        notificationPollingInterval = null;
+        console.log('🔇 Notification polling stopped');
+    }
+}
+// =============================================
+
 /**
  * Initialize orders on page load
  */
@@ -260,6 +421,10 @@ async function initializeOrders() {
             console.log(`📦 Loaded ${orders.length} orders from localStorage (fallback)`);
         }
     }
+    
+    // ===== NEW: Clean up stale orders on init =====
+    await cleanupStaleOrders();
+    // ============================================
 }
 
 // ==================== INITIALIZATION ====================
@@ -324,6 +489,28 @@ document.addEventListener('DOMContentLoaded', async function() {
     if (currentUser.city) {
       document.getElementById('cust-city').value = currentUser.city;
     }
+    
+    // ===== NEW: Check for pending notifications on page load =====
+    if (currentUser?.isAdmin) {
+        setTimeout(async () => {
+            const notifications = await fetchNotificationsFromServer();
+            if (notifications.length > 0) {
+                console.log(`🔔 Found ${notifications.length} pending notifications`);
+                for (const notification of notifications) {
+                    startNewOrderNotification();
+                    showNewOrderConfirmation({
+                        displayId: notification.orderId,
+                        customerName: notification.customerName,
+                        total: notification.total,
+                        items: notification.items
+                    });
+                }
+                await clearNotificationsOnServer();
+            }
+        }, 2000);
+    }
+    // ============================================================
+    
   } else {
     showAuthModal();
   }
@@ -604,6 +791,21 @@ async function handleLogin() {
       
       // ===== CHECK FOR PENDING NOTIFICATIONS AFTER LOGIN =====
       if (currentUser.isAdmin === true || currentUser.isAdmin === 'true') {
+          // ===== UPDATED: Also check server for pending notifications =====
+          const serverNotifications = await fetchNotificationsFromServer();
+          if (serverNotifications.length > 0) {
+              for (const notification of serverNotifications) {
+                  startNewOrderNotification();
+                  showNewOrderConfirmation({
+                      displayId: notification.orderId,
+                      customerName: notification.customerName,
+                      total: notification.total,
+                      items: notification.items
+                  });
+              }
+              await clearNotificationsOnServer();
+          }
+          
           const pending = localStorage.getItem('pendingNewOrder');
           if (pending) {
               const orderData = JSON.parse(pending);
@@ -615,6 +817,7 @@ async function handleLogin() {
                   }, 1000);
               }
           }
+          // ============================================================
       }
       // ======================================================
       
@@ -687,6 +890,10 @@ function logout() {
     adminSyncInterval = null;
   }
   
+  // ===== NEW: Stop notification polling =====
+  stopNotificationPolling();
+  // =========================================
+  
   currentUser = null;
   sessionStorage.removeItem('currentUser');
   cart = [];
@@ -757,6 +964,10 @@ function startAdminSync() {
             const oldCount = orders.length;
             await fetchOrdersFromServer();
             
+            // ===== NEW: Clean up stale orders periodically =====
+            await cleanupStaleOrders();
+            // =================================================
+            
             // If new orders came in and admin panel is open, refresh it
             if (orders.length > oldCount && 
                 document.getElementById('content-area').innerHTML.includes('Admin Panel')) {
@@ -801,6 +1012,9 @@ function updateUIForLoggedInUser() {
       startNotificationChecker();
       // Start admin sync
       startAdminSync();
+      // ===== NEW: Start notification polling =====
+      startNotificationPolling();
+      // ==========================================
     } else {
       soundControl.style.display = 'none';  // Hide for regular users
       console.log('🔇 Sound button HIDDEN (regular user)');
@@ -1532,11 +1746,26 @@ async function confirmOrder() {
     orders.push(localOrder);
     localStorage.setItem('orders', JSON.stringify(orders));
     
-    // ===== 🔔 FIXED: ALWAYS trigger notification for admin =====
+    // ===== 🔔 UPDATED: Store both full ID and display ID =====
     const isAdmin = currentUser?.isAdmin === true || currentUser?.isAdmin === 'true';
     
-    // Always store pending notification for any admin
+    // Create notification with FULL order ID
+    const notification = {
+        fullOrderId: localOrder.id,
+        orderId: localOrder.id.toString().slice(-6), // For display
+        customerName: localOrder.customerName,
+        total: localOrder.total,
+        items: localOrder.items.length,
+        phone: currentUser.phone,
+        timestamp: new Date().toISOString()
+    };
+    
+    // Store on server (this works across all devices!)
+    await storeNotificationOnServer(notification);
+    
+    // Also store locally as backup (with both IDs)
     const pendingOrder = {
+      fullOrderId: localOrder.id,
       orderId: localOrder.id.toString().slice(-6),
       customerName: localOrder.customerName,
       total: localOrder.total,
@@ -1550,7 +1779,13 @@ async function confirmOrder() {
     if (isAdmin) {
       setTimeout(() => {
         startNewOrderNotification();
-        showNewOrderConfirmation(pendingOrder);
+        showNewOrderConfirmation({
+            displayId: pendingOrder.orderId,
+            fullOrderId: pendingOrder.fullOrderId,
+            customerName: pendingOrder.customerName,
+            total: pendingOrder.total,
+            items: pendingOrder.items
+        });
       }, 500);
     }
     
@@ -1591,7 +1826,13 @@ function checkForPendingNewOrder() {
         // Check if notification is less than 1 hour old
         if (Date.now() - orderData.timestamp < 3600000) {
             startNewOrderNotification();
-            showNewOrderConfirmation(orderData);
+            showNewOrderConfirmation({
+                displayId: orderData.orderId,
+                fullOrderId: orderData.fullOrderId,
+                customerName: orderData.customerName,
+                total: orderData.total,
+                items: orderData.items
+            });
             localStorage.removeItem('pendingNewOrder');
         }
     }
@@ -1694,6 +1935,10 @@ async function showAdminPanel() {
     }
     // ===========================================
     
+    // ===== NEW: Clean up stale orders =====
+    await cleanupStaleOrders();
+    // ======================================
+    
     // Check for pending new orders
     checkForPendingNewOrder();
     
@@ -1729,9 +1974,13 @@ async function showAdminPanel() {
           actionButtons = '<span style="color:#999;">Completed</span>';
         }
         
+        // ===== UPDATED: Show full ID in tooltip =====
+        const fullOrderId = order.id || order.orderId;
+        const displayId = fullOrderId ? fullOrderId.toString().slice(-6) : 'N/A';
+        
         adminHTML += `
           <tr>
-            <td>#${order.id?.toString().slice(-6) || 'N/A'}</td>
+            <td>#${displayId}<br><small style="font-size:10px; color:#999;" title="${fullOrderId}">${fullOrderId}</small></td>
             <td>${order.customerName}<br><small>${order.customerPhone}</small></td>
             <td>${order.items.map(i => `${i.qty}x ${i.name}`).join('<br>')}</td>
             <td>₱${order.total}</td>
@@ -1766,17 +2015,22 @@ async function refreshOrders() {
  * Update order status - SYNC WITH SERVER
  */
 async function updateOrderStatus(orderId, newStatus) {
-  const order = orders.find(o => o.id === orderId);
+  // ===== UPDATED: Handle both full ID and display ID =====
+  const order = orders.find(o => {
+      const fullId = o.id || o.orderId;
+      return fullId === orderId || fullId.toString().endsWith(orderId);
+  });
+  
   if (!order) return false;
   
-  const oldStatus = order.status;
+  const fullOrderId = order.id || order.orderId;
   
   try {
     showLoading();
     
     // Update on server first
     const result = await apiRequest('api/orders', 'PUT', {
-      id: orderId,
+      id: fullOrderId,  // Send FULL ID to server
       status: newStatus
     });
     

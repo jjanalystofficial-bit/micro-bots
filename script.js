@@ -18,6 +18,89 @@ let sessionTimer;
 let warningTimer;
 let resetCodes = {};
 
+// ==================== SOUND NOTIFICATION CONFIGURATION ====================
+let AUDIO_ENABLED = true;
+let newOrderAudio = null;
+
+// Load sound preference
+const savedSound = localStorage.getItem('soundEnabled');
+if (savedSound !== null) {
+    AUDIO_ENABLED = savedSound === 'true';
+}
+
+// Create audio object for your MP3 (update path as needed)
+const notificationSound = new Audio('/micro-bots/sounds/order-alert.mp3');
+// If you kept the original filename, use this instead:
+// const notificationSound = new Audio('/micro-bots/sounds/freesound_community-alert-33762.mp3');
+
+// Configure the audio to loop
+notificationSound.loop = true;
+
+/**
+ * Start looping notification sound for new order
+ */
+function startNewOrderNotification() {
+    if (!AUDIO_ENABLED) return;
+    
+    console.log('🔊 New order notification started');
+    notificationSound.play().catch(error => {
+        console.warn('⚠️ Could not play notification:', error);
+    });
+}
+
+/**
+ * Stop notification sound
+ */
+function stopNotification() {
+    if (notificationSound) {
+        notificationSound.pause();
+        notificationSound.currentTime = 0;
+    }
+    console.log('🔇 Notification stopped');
+}
+
+/**
+ * Show new order confirmation popup
+ */
+function showNewOrderConfirmation(orderData) {
+    const message = `🛵 NEW ORDER RECEIVED!\n\n` +
+                    `Order #${orderData.orderId}\n` +
+                    `Customer: ${orderData.customerName}\n` +
+                    `Total: ₱${orderData.total}\n` +
+                    `Items: ${orderData.items} item(s)\n\n` +
+                    `Click OK to stop notification`;
+    
+    if (confirm(message)) {
+        stopNotification();
+        if (currentUser?.isAdmin) {
+            showAdminPanel(); // Refresh admin panel
+        }
+    }
+}
+
+/**
+ * Toggle sound on/off
+ */
+function toggleSound() {
+    AUDIO_ENABLED = !AUDIO_ENABLED;
+    const btn = document.getElementById('toggle-sound');
+    if (btn) {
+        btn.innerHTML = AUDIO_ENABLED ? '🔔 Sound On' : '🔇 Sound Off';
+    }
+    
+    // Stop any playing sound if disabled
+    if (!AUDIO_ENABLED) {
+        stopNotification();
+    }
+    
+    localStorage.setItem('soundEnabled', AUDIO_ENABLED);
+    console.log(`Sound ${AUDIO_ENABLED ? 'enabled' : 'disabled'}`);
+}
+
+// Make functions globally available
+window.stopNotification = stopNotification;
+window.toggleSound = toggleSound;
+
 // Order status sequence
 const orderStatusSequence = [
   { key: 'pending', label: 'Order Placed', icon: '📝' },
@@ -122,6 +205,19 @@ document.addEventListener('DOMContentLoaded', async function() {
   editOrderBtn = document.getElementById("edit-order");
   confirmOrderBtn = document.getElementById("confirm-order");
   totalPayMsg = document.getElementById("total-pay-msg");
+
+  // Initialize sound button state
+  const soundBtn = document.getElementById('toggle-sound');
+  if (soundBtn) {
+    soundBtn.innerHTML = AUDIO_ENABLED ? '🔔 Sound On' : '🔇 Sound Off';
+  }
+  
+  // ===== HIDE SOUND CONTROL INITIALLY (only appears when admin logs in) =====
+  const soundControl = document.querySelector('.sound-control');
+  if (soundControl) {
+    soundControl.style.display = 'none'; // Hidden until admin logs in
+  }
+  // ==========================================================================
 
   // Initialize stock from localStorage or set defaults
   initializeStock();
@@ -433,6 +529,9 @@ async function handleLogin() {
  * Logout user
  */
 function logout() {
+  // Stop any playing notification
+  stopNotification();
+  
   currentUser = null;
   sessionStorage.removeItem('currentUser');
   cart = [];
@@ -469,6 +568,17 @@ function updateUIForLoggedInUser() {
   document.getElementById('sidebar-user-name').textContent = `👤 ${currentUser.name}`;
   document.getElementById('sidebar-user-phone').textContent = `📱 ${currentUser.phone}`;
   
+  // ===== 🔔 SHOW/HIDE SOUND BUTTON BASED ON ADMIN STATUS =====
+  const soundControl = document.querySelector('.sound-control');
+  if (soundControl) {
+    if (currentUser.isAdmin) {
+      soundControl.style.display = 'block'; // Show for admin
+    } else {
+      soundControl.style.display = 'none';  // Hide for regular users
+    }
+  }
+  // ============================================================
+  
   document.getElementById('cust-name').readOnly = false;
   document.getElementById('cust-contact').readOnly = false;
   document.getElementById('cust-city').disabled = false;
@@ -498,6 +608,13 @@ function updateUIForLoggedOutUser() {
   document.getElementById('history-link').style.display = 'none';
   document.getElementById('admin-link').style.display = 'none';
   document.getElementById('stock-link').style.display = 'none';
+  
+  // ===== HIDE SOUND BUTTON WHEN LOGGED OUT =====
+  const soundControl = document.querySelector('.sound-control');
+  if (soundControl) {
+    soundControl.style.display = 'none';
+  }
+  // ==============================================
   
   document.getElementById('place-order').disabled = true;
   document.getElementById('place-order').textContent = '🔒 Login to Order';
@@ -1156,7 +1273,7 @@ async function confirmOrder() {
   
   const order = {
     customerPhone: formattedPhone,
-    customerName: currentUser.name,
+    customerName: currentUser.name || 'Unknown Customer',
     items: cart.map(item => ({
       name: item.name,
       qty: item.qty,
@@ -1184,6 +1301,33 @@ async function confirmOrder() {
     orders.push(localOrder);
     localStorage.setItem('orders', JSON.stringify(orders));
     
+    // ===== 🔔 NEW ORDER NOTIFICATION FOR ADMIN =====
+    if (currentUser?.isAdmin) {
+      // If admin is placing order, notify immediately
+      startNewOrderNotification();
+      showNewOrderConfirmation({
+        orderId: localOrder.id.toString().slice(-6),
+        customerName: localOrder.customerName,
+        total: localOrder.total,
+        items: localOrder.items.length
+      });
+    } else {
+      // For customer orders, store for when admin logs in
+      localStorage.setItem('pendingNewOrder', JSON.stringify({
+        orderId: localOrder.id.toString().slice(-6),
+        customerName: localOrder.customerName,
+        total: localOrder.total,
+        items: localOrder.items.length,
+        timestamp: Date.now()
+      }));
+      
+      // If admin panel is open, show notification
+      if (document.getElementById('content-area').innerHTML.includes('Admin Panel')) {
+        checkForPendingNewOrder();
+      }
+    }
+    // ==============================================
+    
     // Update local stock
     cart.forEach(cartItem => {
       for (let category in menuItems) {
@@ -1205,6 +1349,22 @@ async function confirmOrder() {
   } else {
     alert("❌ Error placing order: " + (result.message || 'Unknown error'));
   }
+}
+
+/**
+ * Check for pending new order when admin panel opens
+ */
+function checkForPendingNewOrder() {
+    const pending = localStorage.getItem('pendingNewOrder');
+    if (pending && currentUser?.isAdmin) {
+        const orderData = JSON.parse(pending);
+        // Check if notification is less than 1 hour old
+        if (Date.now() - orderData.timestamp < 3600000) {
+            startNewOrderNotification();
+            showNewOrderConfirmation(orderData);
+            localStorage.removeItem('pendingNewOrder');
+        }
+    }
 }
 
 /**
@@ -1288,6 +1448,9 @@ function renderOrderStatusTracker(order) {
 function showAdminPanel() {
   if (!currentUser || !currentUser.isAdmin) return;
   
+  // Check for pending new orders
+  checkForPendingNewOrder();
+  
   let adminHTML = '<div class="admin-panel">';
   adminHTML += '<button class="back-btn" onclick="showSection(\'all\')">← Back to Menu</button>';
   adminHTML += '<div class="admin-header"><h2>👑 Admin Panel - Manage Orders</h2>';
@@ -1342,6 +1505,7 @@ function showAdminPanel() {
 function updateOrderStatus(orderId, newStatus) {
   const order = orders.find(o => o.id === orderId);
   if (order) {
+    const oldStatus = order.status;
     order.status = newStatus;
     localStorage.setItem('orders', JSON.stringify(orders));
     

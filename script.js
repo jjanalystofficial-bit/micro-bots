@@ -22,6 +22,7 @@ let resetCodes = {};
 let AUDIO_ENABLED = true;
 let newOrderAudio = null;
 let notificationCheckerInterval = null;
+let soundLoopInterval = null; // For manual fallback if needed
 
 // Load sound preference
 const savedSound = localStorage.getItem('soundEnabled');
@@ -34,8 +35,182 @@ const notificationSound = new Audio('/micro-bots/sounds/order-alert.mp3');
 // If you kept the original filename, use this instead:
 // const notificationSound = new Audio('/micro-bots/sounds/freesound_community-alert-33762.mp3');
 
-// Configure the audio to loop
-notificationSound.loop = true;
+// Configure the audio
+notificationSound.loop = true; // Set loop property
+notificationSound.preload = 'auto'; // Preload for faster playback
+
+/**
+ * Handle sound ended event - ensures looping works in all browsers
+ */
+function handleSoundEnded() {
+    if (!AUDIO_ENABLED) return;
+    
+    console.log('🔊 Sound ended, restarting...');
+    notificationSound.currentTime = 0;
+    
+    // Try to play again
+    const playPromise = notificationSound.play();
+    if (playPromise !== undefined) {
+        playPromise.catch(error => {
+            console.warn('⚠️ Could not restart sound:', error);
+        });
+    }
+}
+
+/**
+ * Start looping notification sound for new order
+ */
+function startNewOrderNotification(orderData = null) {
+    if (!AUDIO_ENABLED) return;
+    
+    console.log('🔊 New order notification started');
+    
+    // Reset audio to beginning
+    notificationSound.currentTime = 0;
+    
+    // Remove any existing event listener to avoid duplicates
+    notificationSound.removeEventListener('ended', handleSoundEnded);
+    
+    // Add ended event listener for reliable looping
+    notificationSound.addEventListener('ended', handleSoundEnded);
+    
+    // Try to play
+    const playPromise = notificationSound.play();
+    
+    if (playPromise !== undefined) {
+        playPromise
+            .then(() => {
+                console.log('🔊 Sound playing with loop (via ended event)');
+            })
+            .catch(error => {
+                console.warn('⚠️ Could not play notification (autoplay restriction):', error);
+                // Remove ended listener if play failed
+                notificationSound.removeEventListener('ended', handleSoundEnded);
+                // Show visual notification instead
+                showVisualNotification(orderData);
+            });
+    }
+    
+    // ALWAYS show visual notification (backup for all devices)
+    showVisualNotification(orderData);
+}
+
+/**
+ * Show visual notification with order details
+ */
+function showVisualNotification(orderData = null) {
+    // Remove any existing notifications
+    const existing = document.querySelector('.visual-notification');
+    if (existing) existing.remove();
+    
+    const notification = document.createElement('div');
+    notification.className = 'visual-notification';
+    
+    // Use order data if available, otherwise generic message
+    if (orderData) {
+        notification.innerHTML = `
+            <button class="close-btn" onclick="this.parentElement.remove(); window.stopNotification();">✖</button>
+            <h4>🔔 NEW ORDER RECEIVED!</h4>
+            <p><strong>Order ${orderData.orderId}</strong></p>
+            <p>👤 Customer: ${orderData.customerName}</p>
+            <p>💰 Total: ₱${orderData.total}</p>
+            <p>📦 Items: ${orderData.items}</p>
+            <p style="margin-top:10px; font-size:12px; opacity:0.7;">Click anywhere to stop sound</p>
+        `;
+    } else {
+        notification.innerHTML = `
+            <button class="close-btn" onclick="this.parentElement.remove(); window.stopNotification();">✖</button>
+            <h4>🔔 NEW ORDER RECEIVED!</h4>
+            <p>Check admin panel for details.</p>
+            <p style="margin-top:10px; font-size:12px; opacity:0.7;">Click anywhere to stop sound</p>
+        `;
+    }
+    
+    // Click anywhere on notification stops sound and removes it
+    notification.addEventListener('click', function(e) {
+        if (e.target.className !== 'close-btn') {
+            this.remove();
+            window.stopNotification();
+        }
+    });
+    
+    document.body.appendChild(notification);
+    
+    // Auto-remove after 30 seconds if not clicked (but sound keeps playing until acknowledged)
+    setTimeout(() => {
+        const notif = document.querySelector('.visual-notification');
+        if (notif) {
+            notif.remove();
+            // Note: sound continues until admin clicks OK in confirm dialog
+        }
+    }, 30000);
+}
+
+/**
+ * Stop notification sound
+ */
+function stopNotification() {
+    if (notificationSound) {
+        notificationSound.pause();
+        notificationSound.currentTime = 0;
+        // Remove ended event listener
+        notificationSound.removeEventListener('ended', handleSoundEnded);
+    }
+    
+    // Clear any manual interval if used (backup)
+    if (soundLoopInterval) {
+        clearInterval(soundLoopInterval);
+        soundLoopInterval = null;
+    }
+    
+    console.log('🔇 Notification stopped');
+}
+
+/**
+ * Show new order confirmation popup
+ */
+function showNewOrderConfirmation(orderData) {
+    const message = `🛵 NEW ORDER RECEIVED!\n\n` +
+                    `Order ${orderData.orderId}\n` +
+                    `Customer: ${orderData.customerName}\n` +
+                    `Total: ₱${orderData.total}\n` +
+                    `Items: ${orderData.items} item(s)\n\n` +
+                    `Click OK to stop notification`;
+    
+    // Use setTimeout to ensure the popup doesn't get blocked
+    setTimeout(() => {
+        if (confirm(message)) {
+            stopNotification();
+            // Refresh admin panel if it's open
+            if (document.getElementById('content-area').innerHTML.includes('Admin Panel')) {
+                showAdminPanel();
+            }
+        }
+    }, 100);
+}
+
+/**
+ * Toggle sound on/off
+ */
+function toggleSound() {
+    AUDIO_ENABLED = !AUDIO_ENABLED;
+    const btn = document.getElementById('toggle-sound');
+    if (btn) {
+        btn.innerHTML = AUDIO_ENABLED ? '🔔 Sound On' : '🔇 Sound Off';
+    }
+    
+    // Stop any playing sound if disabled
+    if (!AUDIO_ENABLED) {
+        stopNotification();
+    }
+    
+    localStorage.setItem('soundEnabled', AUDIO_ENABLED);
+    console.log(`Sound ${AUDIO_ENABLED ? 'enabled' : 'disabled'}`);
+}
+
+// Make functions globally available
+window.stopNotification = stopNotification;
+window.toggleSound = toggleSound;
 
 // ==================== HELPER FUNCTIONS FOR PHILIPPINE TIME ====================
 /**
@@ -88,139 +263,6 @@ function formatToPhilippineTime(timestamp) {
         return timestamp || 'Unknown';
     }
 }
-
-/**
- * Start looping notification sound for new order
- */
-function startNewOrderNotification(orderData = null) {
-    if (!AUDIO_ENABLED) return;
-    
-    console.log('🔊 New order notification started');
-    
-    // For iOS: Try to play and handle autoplay restrictions
-    const playPromise = notificationSound.play();
-    
-    if (playPromise !== undefined) {
-        playPromise.catch(error => {
-            console.warn('⚠️ Could not play notification (iOS autoplay restriction):', error);
-            // Show visual notification instead for iOS
-            showVisualNotification(orderData);
-        });
-    }
-    
-    // Always show visual notification as backup
-    setTimeout(() => {
-        showVisualNotification(orderData);
-    }, 1000);
-}
-
-/**
- * Show visual notification for iOS when audio fails
- */
-function showVisualNotification(orderData = null) {
-    // Remove any existing notifications
-    const existing = document.querySelector('.visual-notification');
-    if (existing) existing.remove();
-    
-    const notification = document.createElement('div');
-    notification.className = 'visual-notification';
-    
-    // Use order data if available, otherwise generic message
-    if (orderData) {
-        notification.innerHTML = `
-            <button class="close-btn" onclick="this.parentElement.remove(); window.stopNotification();">✖</button>
-            <h4>🔔 NEW ORDER RECEIVED!</h4>
-            <p><strong>Order ${orderData.orderId}</strong></p>
-            <p>👤 Customer: ${orderData.customerName}</p>
-            <p>💰 Total: ₱${orderData.total}</p>
-            <p>📦 Items: ${orderData.items}</p>
-            <p style="margin-top:10px; font-size:12px; opacity:0.7;">Click anywhere to stop sound</p>
-        `;
-    } else {
-        notification.innerHTML = `
-            <button class="close-btn" onclick="this.parentElement.remove(); window.stopNotification();">✖</button>
-            <h4>🔔 NEW ORDER RECEIVED!</h4>
-            <p>Check admin panel for details.</p>
-            <p style="margin-top:10px; font-size:12px; opacity:0.7;">Click anywhere to stop sound</p>
-        `;
-    }
-    
-    // Click anywhere on notification stops sound and removes it
-    notification.addEventListener('click', function(e) {
-        if (e.target.className !== 'close-btn') {
-            this.remove();
-            window.stopNotification();
-        }
-    });
-    
-    document.body.appendChild(notification);
-    
-    // Auto-remove after 30 seconds if not clicked
-    setTimeout(() => {
-        const notif = document.querySelector('.visual-notification');
-        if (notif) {
-            notif.remove();
-            window.stopNotification();
-        }
-    }, 30000);
-}
-
-/**
- * Stop notification sound
- */
-function stopNotification() {
-    if (notificationSound) {
-        notificationSound.pause();
-        notificationSound.currentTime = 0;
-    }
-    console.log('🔇 Notification stopped');
-}
-
-/**
- * Show new order confirmation popup
- */
-function showNewOrderConfirmation(orderData) {
-    const message = `🛵 NEW ORDER RECEIVED!\n\n` +
-                    `Order ${orderData.orderId}\n` +
-                    `Customer: ${orderData.customerName}\n` +
-                    `Total: ₱${orderData.total}\n` +
-                    `Items: ${orderData.items} item(s)\n\n` +
-                    `Click OK to stop notification`;
-    
-    // Use setTimeout to ensure the popup doesn't get blocked
-    setTimeout(() => {
-        if (confirm(message)) {
-            stopNotification();
-            // Refresh admin panel if it's open
-            if (document.getElementById('content-area').innerHTML.includes('Admin Panel')) {
-                showAdminPanel();
-            }
-        }
-    }, 100);
-}
-
-/**
- * Toggle sound on/off
- */
-function toggleSound() {
-    AUDIO_ENABLED = !AUDIO_ENABLED;
-    const btn = document.getElementById('toggle-sound');
-    if (btn) {
-        btn.innerHTML = AUDIO_ENABLED ? '🔔 Sound On' : '🔇 Sound Off';
-    }
-    
-    // Stop any playing sound if disabled
-    if (!AUDIO_ENABLED) {
-        stopNotification();
-    }
-    
-    localStorage.setItem('soundEnabled', AUDIO_ENABLED);
-    console.log(`Sound ${AUDIO_ENABLED ? 'enabled' : 'disabled'}`);
-}
-
-// Make functions globally available
-window.stopNotification = stopNotification;
-window.toggleSound = toggleSound;
 
 // Order status sequence
 const orderStatusSequence = [

@@ -21,6 +21,7 @@ let resetCodes = {};
 // ==================== SOUND NOTIFICATION CONFIGURATION ====================
 let AUDIO_ENABLED = true;
 let newOrderAudio = null;
+let notificationCheckerInterval = null;
 
 // Load sound preference
 const savedSound = localStorage.getItem('soundEnabled');
@@ -43,9 +44,42 @@ function startNewOrderNotification() {
     if (!AUDIO_ENABLED) return;
     
     console.log('🔊 New order notification started');
-    notificationSound.play().catch(error => {
-        console.warn('⚠️ Could not play notification:', error);
-    });
+    
+    // For iOS: Try to play and handle autoplay restrictions
+    const playPromise = notificationSound.play();
+    
+    if (playPromise !== undefined) {
+        playPromise.catch(error => {
+            console.warn('⚠️ Could not play notification (iOS autoplay restriction):', error);
+            // Show visual indicator instead for iOS
+            showVisualNotification();
+        });
+    }
+}
+
+/**
+ * Show visual notification for iOS when audio fails
+ */
+function showVisualNotification() {
+    const notification = document.createElement('div');
+    notification.style.position = 'fixed';
+    notification.style.top = '20px';
+    notification.style.right = '20px';
+    notification.style.background = '#c62828';
+    notification.style.color = 'white';
+    notification.style.padding = '15px 25px';
+    notification.style.borderRadius = '10px';
+    notification.style.boxShadow = '0 4px 15px rgba(0,0,0,0.3)';
+    notification.style.zIndex = '10000';
+    notification.style.animation = 'slideIn 0.3s';
+    notification.style.borderLeft = '5px solid #ffd700';
+    notification.innerHTML = '🔔 NEW ORDER RECEIVED! Check admin panel.';
+    
+    document.body.appendChild(notification);
+    
+    setTimeout(() => {
+        notification.remove();
+    }, 5000);
 }
 
 /**
@@ -70,12 +104,16 @@ function showNewOrderConfirmation(orderData) {
                     `Items: ${orderData.items} item(s)\n\n` +
                     `Click OK to stop notification`;
     
-    if (confirm(message)) {
-        stopNotification();
-        if (currentUser?.isAdmin) {
-            showAdminPanel(); // Refresh admin panel
+    // Use setTimeout to ensure the popup doesn't get blocked
+    setTimeout(() => {
+        if (confirm(message)) {
+            stopNotification();
+            // Refresh admin panel if it's open
+            if (document.getElementById('content-area').innerHTML.includes('Admin Panel')) {
+                showAdminPanel();
+            }
         }
-    }
+    }, 100);
 }
 
 /**
@@ -499,6 +537,23 @@ async function handleLogin() {
       updateUIForLoggedInUser();
       startSessionTimer();
       alert('✅ Login successful!');
+      
+      // ===== CHECK FOR PENDING NOTIFICATIONS AFTER LOGIN =====
+      if (currentUser.isAdmin === true || currentUser.isAdmin === 'true') {
+          const pending = localStorage.getItem('pendingNewOrder');
+          if (pending) {
+              const orderData = JSON.parse(pending);
+              if (Date.now() - orderData.timestamp < 3600000) {
+                  setTimeout(() => {
+                      startNewOrderNotification();
+                      showNewOrderConfirmation(orderData);
+                      localStorage.removeItem('pendingNewOrder');
+                  }, 1000);
+              }
+          }
+      }
+      // ======================================================
+      
     } else {
       alert('❌ Invalid password');
     }
@@ -526,6 +581,23 @@ async function handleLogin() {
       hideAuthModal();
       updateUIForLoggedInUser();
       startSessionTimer();
+      
+      // ===== CHECK FOR PENDING NOTIFICATIONS AFTER LOGIN =====
+      if (currentUser.isAdmin === true || currentUser.isAdmin === 'true') {
+          const pending = localStorage.getItem('pendingNewOrder');
+          if (pending) {
+              const orderData = JSON.parse(pending);
+              if (Date.now() - orderData.timestamp < 3600000) {
+                  setTimeout(() => {
+                      startNewOrderNotification();
+                      showNewOrderConfirmation(orderData);
+                      localStorage.removeItem('pendingNewOrder');
+                  }, 1000);
+              }
+          }
+      }
+      // ======================================================
+      
     } else {
       alert('❌ Phone number not found or invalid password');
     }
@@ -538,6 +610,12 @@ async function handleLogin() {
 function logout() {
   // Stop any playing notification
   stopNotification();
+  
+  // Stop notification checker
+  if (notificationCheckerInterval) {
+    clearInterval(notificationCheckerInterval);
+    notificationCheckerInterval = null;
+  }
   
   currentUser = null;
   sessionStorage.removeItem('currentUser');
@@ -568,6 +646,33 @@ function hideAuthModal() {
 }
 
 /**
+ * Check for pending notifications periodically
+ */
+function startNotificationChecker() {
+    // Clear existing interval if any
+    if (notificationCheckerInterval) {
+        clearInterval(notificationCheckerInterval);
+    }
+    
+    // Check every 10 seconds for pending notifications
+    notificationCheckerInterval = setInterval(() => {
+        if (currentUser && (currentUser.isAdmin === true || currentUser.isAdmin === 'true')) {
+            const pending = localStorage.getItem('pendingNewOrder');
+            if (pending) {
+                const orderData = JSON.parse(pending);
+                // Check if notification is less than 1 hour old
+                if (Date.now() - orderData.timestamp < 3600000) {
+                    // Show notification immediately
+                    startNewOrderNotification();
+                    showNewOrderConfirmation(orderData);
+                    localStorage.removeItem('pendingNewOrder');
+                }
+            }
+        }
+    }, 10000); // Check every 10 seconds
+}
+
+/**
  * Update UI for logged in user
  */
 function updateUIForLoggedInUser() {
@@ -589,6 +694,8 @@ function updateUIForLoggedInUser() {
     if (isAdmin) {
       soundControl.style.display = 'block'; // Show for admin
       console.log('🔔 Sound button SHOWN (admin)');
+      // Start notification checker for admin
+      startNotificationChecker();
     } else {
       soundControl.style.display = 'none';  // Hide for regular users
       console.log('🔇 Sound button HIDDEN (regular user)');
@@ -1320,19 +1427,20 @@ async function confirmOrder() {
     orders.push(localOrder);
     localStorage.setItem('orders', JSON.stringify(orders));
     
-    // ===== 🔔 NEW ORDER NOTIFICATION FOR ADMIN =====
-    // Check if user is admin (handle both boolean and string)
+    // ===== 🔔 FIXED: ALWAYS trigger notification for admin, regardless of which page they're on =====
     const isAdmin = currentUser?.isAdmin === true || currentUser?.isAdmin === 'true';
     
     if (isAdmin) {
-      // If admin is placing order, notify immediately
-      startNewOrderNotification();
-      showNewOrderConfirmation({
-        orderId: localOrder.id.toString().slice(-6),
-        customerName: localOrder.customerName,
-        total: localOrder.total,
-        items: localOrder.items.length
-      });
+      // If admin is placing order, notify immediately with a popup that appears NOW
+      setTimeout(() => {
+        startNewOrderNotification();
+        showNewOrderConfirmation({
+          orderId: localOrder.id.toString().slice(-6),
+          customerName: localOrder.customerName,
+          total: localOrder.total,
+          items: localOrder.items.length
+        });
+      }, 500); // Small delay to ensure order is saved first
     } else {
       // For customer orders, store for when admin logs in
       localStorage.setItem('pendingNewOrder', JSON.stringify({
@@ -1343,9 +1451,15 @@ async function confirmOrder() {
         timestamp: Date.now()
       }));
       
-      // If admin panel is open, show notification
-      if (document.getElementById('content-area').innerHTML.includes('Admin Panel')) {
-        checkForPendingNewOrder();
+      // Also trigger notification if admin is currently logged in (maybe they're on another tab)
+      if (currentUser && (currentUser.isAdmin === true || currentUser.isAdmin === 'true')) {
+        startNewOrderNotification();
+        showNewOrderConfirmation({
+          orderId: localOrder.id.toString().slice(-6),
+          customerName: localOrder.customerName,
+          total: localOrder.total,
+          items: localOrder.items.length
+        });
       }
     }
     // ==============================================

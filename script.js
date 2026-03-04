@@ -480,6 +480,10 @@ async function handleLogin() {
     // Format city as string
     user.city = user.city.toString();
     
+    // ===== 🔔 FIX: Ensure isAdmin is properly handled =====
+    // Convert to boolean if it's a string
+    user.isAdmin = user.isAdmin === true || user.isAdmin === 'true';
+    
     if (user.password === password) {
       currentUser = user;
       sessionStorage.setItem('currentUser', JSON.stringify(currentUser));
@@ -505,6 +509,9 @@ async function handleLogin() {
       // Format phone in localStorage too
       user.phone = user.phone.toString().padStart(11, '0');
       user.city = user.city.toString();
+      
+      // ===== 🔔 FIX: Ensure isAdmin is properly handled =====
+      user.isAdmin = user.isAdmin === true || user.isAdmin === 'true';
       
       currentUser = user;
       sessionStorage.setItem('currentUser', JSON.stringify(currentUser));
@@ -568,13 +575,23 @@ function updateUIForLoggedInUser() {
   document.getElementById('sidebar-user-name').textContent = `👤 ${currentUser.name}`;
   document.getElementById('sidebar-user-phone').textContent = `📱 ${currentUser.phone}`;
   
-  // ===== 🔔 SHOW/HIDE SOUND BUTTON BASED ON ADMIN STATUS =====
+  // ===== 🔔 SHOW/HIDE SOUND BUTTON BASED ON ADMIN STATUS (FIXED) =====
   const soundControl = document.querySelector('.sound-control');
   if (soundControl) {
-    if (currentUser.isAdmin) {
+    // Add debug logs to see what's happening
+    console.log('Current user:', currentUser);
+    console.log('Is admin value:', currentUser.isAdmin);
+    console.log('Is admin type:', typeof currentUser.isAdmin);
+    
+    // Ensure we're checking correctly (handle both boolean and string)
+    const isAdmin = currentUser.isAdmin === true || currentUser.isAdmin === 'true';
+    
+    if (isAdmin) {
       soundControl.style.display = 'block'; // Show for admin
+      console.log('🔔 Sound button SHOWN (admin)');
     } else {
       soundControl.style.display = 'none';  // Hide for regular users
+      console.log('🔇 Sound button HIDDEN (regular user)');
     }
   }
   // ============================================================
@@ -589,7 +606,9 @@ function updateUIForLoggedInUser() {
   document.getElementById('logout-btn').style.display = 'block';
   document.getElementById('history-link').style.display = 'block';
   
-  if (currentUser.isAdmin) {
+  // Check admin status for admin links (using same fix)
+  const isAdmin = currentUser.isAdmin === true || currentUser.isAdmin === 'true';
+  if (isAdmin) {
     document.getElementById('admin-link').style.display = 'block';
     document.getElementById('stock-link').style.display = 'block';
   }
@@ -1302,7 +1321,10 @@ async function confirmOrder() {
     localStorage.setItem('orders', JSON.stringify(orders));
     
     // ===== 🔔 NEW ORDER NOTIFICATION FOR ADMIN =====
-    if (currentUser?.isAdmin) {
+    // Check if user is admin (handle both boolean and string)
+    const isAdmin = currentUser?.isAdmin === true || currentUser?.isAdmin === 'true';
+    
+    if (isAdmin) {
       // If admin is placing order, notify immediately
       startNewOrderNotification();
       showNewOrderConfirmation({

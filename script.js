@@ -22,11 +22,10 @@ let resetCodes = {};
 let AUDIO_ENABLED = true;
 let newOrderAudio = null;
 
-// ===== SINGLE UPDATE SYSTEM =====
-let updateInterval = null;
+// ===== REMOVED: updateInterval and auto-fetching =====
+// No more automatic fetching every X seconds
 let lastNotificationCheck = new Date(0).toISOString();
-let isUpdating = false; // Prevent overlapping updates
-// ================================
+// ====================================================
 
 // Load sound preference
 const savedSound = localStorage.getItem('soundEnabled');
@@ -323,97 +322,9 @@ function showNewOrderIndicator() {
     }
 }
 
-// ===== SINGLE CONSOLIDATED UPDATE SYSTEM =====
-/**
- * Single update function that handles everything
- */
-async function performUpdate() {
-    // Prevent overlapping updates
-    if (isUpdating || !currentUser?.isAdmin) return;
-    
-    isUpdating = true;
-    
-    try {
-        const oldCount = orders.length;
-        
-        // Fetch latest orders
-        await fetchOrdersFromServer();
-        
-        // Check for new notifications
-        const notifications = await fetchNotificationsFromServer(lastNotificationCheck);
-        
-        if (notifications.length > 0) {
-            console.log(`🔔 Found ${notifications.length} new notification(s)`);
-            showNewOrderIndicator();
-            
-            for (const notification of notifications) {
-                const shownKey = `notification_shown_${notification.id}`;
-                if (!localStorage.getItem(shownKey)) {
-                    startNewOrderNotification();
-                    showNewOrderConfirmation({
-                        displayId: notification.orderId,
-                        customerName: notification.customerName,
-                        total: notification.total,
-                        items: notification.items
-                    });
-                    
-                    localStorage.setItem(shownKey, 'true');
-                    setTimeout(() => localStorage.removeItem(shownKey), 3600000);
-                }
-            }
-            
-            lastNotificationCheck = new Date().toISOString();
-            await clearNotificationsOnServer();
-        }
-        
-        // Clean up stale orders
-        await cleanupStaleOrders();
-        
-        // If admin panel is open and we have new orders, refresh it
-        if (orders.length > oldCount && 
-            document.getElementById('content-area').innerHTML.includes('Admin Panel')) {
-            // Use requestAnimationFrame for smooth update
-            requestAnimationFrame(() => {
-                showAdminPanel();
-            });
-        }
-        
-    } catch (error) {
-        console.error('Error in update cycle:', error);
-    } finally {
-        isUpdating = false;
-    }
-}
-
-/**
- * Start the consolidated update system
- */
-function startUpdateSystem() {
-    // Clear any existing interval
-    if (updateInterval) {
-        clearInterval(updateInterval);
-        updateInterval = null;
-    }
-    
-    console.log('🔄 Starting consolidated update system (10s interval)');
-    
-    // Run immediately
-    performUpdate();
-    
-    // Then run every 10 seconds (balanced)
-    updateInterval = setInterval(performUpdate, 10000);
-}
-
-/**
- * Stop the update system
- */
-function stopUpdateSystem() {
-    if (updateInterval) {
-        clearInterval(updateInterval);
-        updateInterval = null;
-        console.log('🛑 Update system stopped');
-    }
-}
+// ===== REMOVED: Auto-fetching functions =====
+// The performUpdate and startUpdateSystem functions have been removed
+// Now only manual fetching via refresh button or opening admin panel
 // =========================================
 
 /**
@@ -759,7 +670,6 @@ async function handleLogin() {
 
 function logout() {
   stopNotification();
-  stopUpdateSystem(); // Stop the consolidated update system
   
   currentUser = null;
   sessionStorage.removeItem('currentUser');
@@ -795,7 +705,7 @@ function updateUIForLoggedInUser() {
     if (isAdmin) {
       soundControl.style.display = 'block';
       console.log('🔔 Sound button SHOWN (admin)');
-      startUpdateSystem(); // Start the SINGLE update system
+      // REMOVED: startUpdateSystem() - no more auto-fetching
     } else {
       soundControl.style.display = 'none';
     }

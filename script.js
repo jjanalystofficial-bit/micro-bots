@@ -40,7 +40,7 @@ notificationSound.loop = true;
 /**
  * Start looping notification sound for new order
  */
-function startNewOrderNotification() {
+function startNewOrderNotification(orderData = null) {
     if (!AUDIO_ENABLED) return;
     
     console.log('🔊 New order notification started');
@@ -51,35 +51,66 @@ function startNewOrderNotification() {
     if (playPromise !== undefined) {
         playPromise.catch(error => {
             console.warn('⚠️ Could not play notification (iOS autoplay restriction):', error);
-            // Show visual indicator instead for iOS
-            showVisualNotification();
+            // Show visual notification instead for iOS
+            showVisualNotification(orderData);
         });
     }
+    
+    // Always show visual notification as backup
+    setTimeout(() => {
+        showVisualNotification(orderData);
+    }, 1000);
 }
 
 /**
  * Show visual notification for iOS when audio fails
  */
-function showVisualNotification() {
+function showVisualNotification(orderData = null) {
+    // Remove any existing notifications
+    const existing = document.querySelector('.visual-notification');
+    if (existing) existing.remove();
+    
     const notification = document.createElement('div');
-    notification.style.position = 'fixed';
-    notification.style.top = '20px';
-    notification.style.right = '20px';
-    notification.style.background = '#c62828';
-    notification.style.color = 'white';
-    notification.style.padding = '15px 25px';
-    notification.style.borderRadius = '10px';
-    notification.style.boxShadow = '0 4px 15px rgba(0,0,0,0.3)';
-    notification.style.zIndex = '10000';
-    notification.style.animation = 'slideIn 0.3s';
-    notification.style.borderLeft = '5px solid #ffd700';
-    notification.innerHTML = '🔔 NEW ORDER RECEIVED! Check admin panel.';
+    notification.className = 'visual-notification';
+    
+    // Use order data if available, otherwise generic message
+    if (orderData) {
+        notification.innerHTML = `
+            <button class="close-btn" onclick="this.parentElement.remove(); window.stopNotification();">✖</button>
+            <h4>🔔 NEW ORDER RECEIVED!</h4>
+            <p><strong>Order #${orderData.orderId}</strong></p>
+            <p>👤 Customer: ${orderData.customerName}</p>
+            <p>💰 Total: ₱${orderData.total}</p>
+            <p>📦 Items: ${orderData.items}</p>
+            <p style="margin-top:10px; font-size:12px; opacity:0.7;">Click anywhere to stop sound</p>
+        `;
+    } else {
+        notification.innerHTML = `
+            <button class="close-btn" onclick="this.parentElement.remove(); window.stopNotification();">✖</button>
+            <h4>🔔 NEW ORDER RECEIVED!</h4>
+            <p>Check admin panel for details.</p>
+            <p style="margin-top:10px; font-size:12px; opacity:0.7;">Click anywhere to stop sound</p>
+        `;
+    }
+    
+    // Click anywhere on notification stops sound and removes it
+    notification.addEventListener('click', function(e) {
+        if (e.target.className !== 'close-btn') {
+            this.remove();
+            window.stopNotification();
+        }
+    });
     
     document.body.appendChild(notification);
     
+    // Auto-remove after 30 seconds if not clicked
     setTimeout(() => {
-        notification.remove();
-    }, 5000);
+        const notif = document.querySelector('.visual-notification');
+        if (notif) {
+            notif.remove();
+            window.stopNotification();
+        }
+    }, 30000);
 }
 
 /**
@@ -545,7 +576,7 @@ async function handleLogin() {
               const orderData = JSON.parse(pending);
               if (Date.now() - orderData.timestamp < 3600000) {
                   setTimeout(() => {
-                      startNewOrderNotification();
+                      startNewOrderNotification(orderData);
                       showNewOrderConfirmation(orderData);
                       localStorage.removeItem('pendingNewOrder');
                   }, 1000);
@@ -589,7 +620,7 @@ async function handleLogin() {
               const orderData = JSON.parse(pending);
               if (Date.now() - orderData.timestamp < 3600000) {
                   setTimeout(() => {
-                      startNewOrderNotification();
+                      startNewOrderNotification(orderData);
                       showNewOrderConfirmation(orderData);
                       localStorage.removeItem('pendingNewOrder');
                   }, 1000);
@@ -663,7 +694,7 @@ function startNotificationChecker() {
                 // Check if notification is less than 1 hour old
                 if (Date.now() - orderData.timestamp < 3600000) {
                     // Show notification immediately
-                    startNewOrderNotification();
+                    startNewOrderNotification(orderData);
                     showNewOrderConfirmation(orderData);
                     localStorage.removeItem('pendingNewOrder');
                 }
@@ -1430,36 +1461,28 @@ async function confirmOrder() {
     // ===== 🔔 FIXED: ALWAYS trigger notification for admin, regardless of which page they're on =====
     const isAdmin = currentUser?.isAdmin === true || currentUser?.isAdmin === 'true';
     
-    if (isAdmin) {
-      // If admin is placing order, notify immediately with a popup that appears NOW
-      setTimeout(() => {
-        startNewOrderNotification();
-        showNewOrderConfirmation({
-          orderId: localOrder.id.toString().slice(-6),
-          customerName: localOrder.customerName,
-          total: localOrder.total,
-          items: localOrder.items.length
-        });
-      }, 500); // Small delay to ensure order is saved first
-    } else {
-      // For customer orders, store for when admin logs in
-      localStorage.setItem('pendingNewOrder', JSON.stringify({
+    const orderData = {
         orderId: localOrder.id.toString().slice(-6),
         customerName: localOrder.customerName,
         total: localOrder.total,
         items: localOrder.items.length,
         timestamp: Date.now()
-      }));
+    };
+    
+    if (isAdmin) {
+      // If admin is placing order, notify immediately with a popup that appears NOW
+      setTimeout(() => {
+        startNewOrderNotification(orderData);
+        showNewOrderConfirmation(orderData);
+      }, 500); // Small delay to ensure order is saved first
+    } else {
+      // For customer orders, store for when admin logs in
+      localStorage.setItem('pendingNewOrder', JSON.stringify(orderData));
       
       // Also trigger notification if admin is currently logged in (maybe they're on another tab)
       if (currentUser && (currentUser.isAdmin === true || currentUser.isAdmin === 'true')) {
-        startNewOrderNotification();
-        showNewOrderConfirmation({
-          orderId: localOrder.id.toString().slice(-6),
-          customerName: localOrder.customerName,
-          total: localOrder.total,
-          items: localOrder.items.length
-        });
+        startNewOrderNotification(orderData);
+        showNewOrderConfirmation(orderData);
       }
     }
     // ==============================================
@@ -1496,7 +1519,7 @@ function checkForPendingNewOrder() {
         const orderData = JSON.parse(pending);
         // Check if notification is less than 1 hour old
         if (Date.now() - orderData.timestamp < 3600000) {
-            startNewOrderNotification();
+            startNewOrderNotification(orderData);
             showNewOrderConfirmation(orderData);
             localStorage.removeItem('pendingNewOrder');
         }

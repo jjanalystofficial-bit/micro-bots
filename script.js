@@ -21,11 +21,7 @@ let resetCodes = {};
 // ==================== SOUND NOTIFICATION CONFIGURATION ====================
 let AUDIO_ENABLED = true;
 let newOrderAudio = null;
-
-// ===== REMOVED: updateInterval and auto-fetching =====
-// No more automatic fetching every X seconds
-let lastNotificationCheck = new Date(0).toISOString();
-// ====================================================
+let notificationCheckerInterval = null;
 
 // Load sound preference
 const savedSound = localStorage.getItem('soundEnabled');
@@ -35,6 +31,8 @@ if (savedSound !== null) {
 
 // Create audio object for your MP3 (update path as needed)
 const notificationSound = new Audio('/micro-bots/sounds/order-alert.mp3');
+// If you kept the original filename, use this instead:
+// const notificationSound = new Audio('/micro-bots/sounds/freesound_community-alert-33762.mp3');
 
 // Configure the audio to loop
 notificationSound.loop = true;
@@ -47,11 +45,13 @@ function startNewOrderNotification() {
     
     console.log('🔊 New order notification started');
     
+    // For iOS: Try to play and handle autoplay restrictions
     const playPromise = notificationSound.play();
     
     if (playPromise !== undefined) {
         playPromise.catch(error => {
-            console.warn('⚠️ Could not play notification:', error);
+            console.warn('⚠️ Could not play notification (iOS autoplay restriction):', error);
+            // Show visual indicator instead for iOS
             showVisualNotification();
         });
     }
@@ -98,15 +98,17 @@ function stopNotification() {
  */
 function showNewOrderConfirmation(orderData) {
     const message = `🛵 NEW ORDER RECEIVED!\n\n` +
-                    `Order #${orderData.displayId || orderData.orderId}\n` +
+                    `Order #${orderData.orderId}\n` +
                     `Customer: ${orderData.customerName}\n` +
                     `Total: ₱${orderData.total}\n` +
                     `Items: ${orderData.items} item(s)\n\n` +
                     `Click OK to stop notification`;
     
+    // Use setTimeout to ensure the popup doesn't get blocked
     setTimeout(() => {
         if (confirm(message)) {
             stopNotification();
+            // Refresh admin panel if it's open
             if (document.getElementById('content-area').innerHTML.includes('Admin Panel')) {
                 showAdminPanel();
             }
@@ -124,6 +126,7 @@ function toggleSound() {
         btn.innerHTML = AUDIO_ENABLED ? '🔔 Sound On' : '🔇 Sound Off';
     }
     
+    // Stop any playing sound if disabled
     if (!AUDIO_ENABLED) {
         stopNotification();
     }
@@ -188,6 +191,7 @@ const menuItems = {
 };
 
 // ==================== GLOBAL FUNCTION DECLARATIONS ====================
+// Make all functions globally available for HTML onclick attributes
 window.showSection = showSection;
 window.showOrderHistory = showOrderHistory;
 window.showAdminPanel = showAdminPanel;
@@ -212,137 +216,6 @@ window.resetPassword = resetPassword;
 // ==================== DOM ELEMENTS ====================
 let cartItems, cartSubtotalSpan, deliveryFeeSpan, cartTotalSpan, citySelect, placeOrderBtn;
 let reviewModal, reviewDetails, editOrderBtn, confirmOrderBtn, totalPayMsg;
-
-// ==================== SERVER SYNC FUNCTIONS ====================
-
-/**
- * Fetch latest orders from server
- */
-async function fetchOrdersFromServer() {
-    try {
-        console.log('📡 Fetching orders from server...');
-        const result = await apiRequest('api/orders', 'GET');
-        
-        if (result.status === 'success' && result.data) {
-            orders = result.data;
-            localStorage.setItem('orders', JSON.stringify(orders));
-            console.log(`✅ Fetched ${orders.length} orders from server`);
-            return true;
-        }
-        return false;
-    } catch (error) {
-        console.error('❌ Error fetching orders:', error);
-        return false;
-    }
-}
-
-/**
- * Clean up stale orders
- */
-async function cleanupStaleOrders() {
-    if (!currentUser?.isAdmin) return;
-    
-    try {
-        const result = await apiRequest('api/orders', 'GET');
-        
-        if (result.status === 'success' && result.data) {
-            const serverOrders = result.data;
-            const serverIds = new Set(serverOrders.map(o => o.id || o.orderId));
-            
-            const localOrders = JSON.parse(localStorage.getItem('orders') || '[]');
-            const freshOrders = localOrders.filter(order => {
-                const orderId = order.id || order.orderId;
-                return serverIds.has(orderId);
-            });
-            
-            if (freshOrders.length !== localOrders.length) {
-                console.log(`🧹 Cleaned up stale orders`);
-                localStorage.setItem('orders', JSON.stringify(freshOrders));
-                orders = freshOrders;
-                
-                if (document.getElementById('content-area').innerHTML.includes('Admin Panel')) {
-                    showAdminPanel();
-                }
-            }
-        }
-    } catch (error) {
-        console.error('Error cleaning up stale orders:', error);
-    }
-}
-
-// ===== Server notification functions =====
-async function storeNotificationOnServer(notification) {
-    try {
-        const result = await apiRequest('api/notifications', 'POST', notification);
-        return result.status === 'success';
-    } catch (error) {
-        return false;
-    }
-}
-
-async function fetchNotificationsFromServer(since = null) {
-    try {
-        let url = 'api/notifications';
-        if (since) url += `?since=${encodeURIComponent(since)}`;
-        
-        const result = await apiRequest(url, 'GET');
-        
-        if (result.status === 'success' && result.notifications) {
-            return result.notifications;
-        }
-        return [];
-    } catch (error) {
-        return [];
-    }
-}
-
-async function clearNotificationsOnServer() {
-    try {
-        const result = await apiRequest('api/notifications', 'DELETE');
-        return result.status === 'success';
-    } catch (error) {
-        return false;
-    }
-}
-
-// ===== NEW ORDER INDICATOR =====
-function showNewOrderIndicator() {
-    const refreshBtn = document.querySelector('button[onclick="refreshOrders()"]');
-    if (refreshBtn) {
-        const originalText = refreshBtn.textContent;
-        refreshBtn.textContent = '🔄 New Orders!';
-        refreshBtn.style.background = '#ff4444';
-        refreshBtn.style.color = 'white';
-        
-        setTimeout(() => {
-            refreshBtn.textContent = originalText;
-            refreshBtn.style.background = '#87ceeb';
-            refreshBtn.style.color = '#333';
-        }, 5000);
-    }
-}
-
-// ===== REMOVED: Auto-fetching functions =====
-// The performUpdate and startUpdateSystem functions have been removed
-// Now only manual fetching via refresh button or opening admin panel
-// =========================================
-
-/**
- * Initialize orders on page load
- */
-async function initializeOrders() {
-    const success = await fetchOrdersFromServer();
-    
-    if (!success) {
-        const localOrders = localStorage.getItem('orders');
-        if (localOrders) {
-            orders = JSON.parse(localOrders);
-            console.log(`📦 Loaded ${orders.length} orders from localStorage (fallback)`);
-        }
-    }
-    
-    await cleanupStaleOrders();
-}
 
 // ==================== INITIALIZATION ====================
 document.addEventListener('DOMContentLoaded', async function() {
@@ -377,14 +250,16 @@ document.addEventListener('DOMContentLoaded', async function() {
     soundBtn.innerHTML = AUDIO_ENABLED ? '🔔 Sound On' : '🔇 Sound Off';
   }
   
-  // Hide sound control initially
+  // ===== HIDE SOUND CONTROL INITIALLY (only appears when admin logs in) =====
   const soundControl = document.querySelector('.sound-control');
   if (soundControl) {
-    soundControl.style.display = 'none';
+    soundControl.style.display = 'none'; // Hidden until admin logs in
   }
+  // ==========================================================================
 
+  // Initialize stock from localStorage or set defaults
   initializeStock();
-  await initializeOrders();
+  
   renderMenuItems();
   
   // Check if user is logged in
@@ -393,40 +268,26 @@ document.addEventListener('DOMContentLoaded', async function() {
     updateUIForLoggedInUser();
     startSessionTimer();
     
+    // Auto-fill saved info
     document.getElementById('cust-name').value = currentUser.name || '';
     document.getElementById('cust-contact').value = currentUser.phone || '';
     document.getElementById('cust-address').value = currentUser.address || '';
     if (currentUser.city) {
       document.getElementById('cust-city').value = currentUser.city;
     }
-    
-    // Check for pending notifications on page load
-    if (currentUser?.isAdmin) {
-        setTimeout(async () => {
-            const notifications = await fetchNotificationsFromServer();
-            if (notifications.length > 0) {
-                for (const notification of notifications) {
-                    startNewOrderNotification();
-                    showNewOrderConfirmation({
-                        displayId: notification.orderId,
-                        customerName: notification.customerName,
-                        total: notification.total,
-                        items: notification.items
-                    });
-                }
-                await clearNotificationsOnServer();
-            }
-        }, 2000);
-    }
-    
   } else {
     showAuthModal();
   }
 
   // Event listeners
-  citySelect.addEventListener("change", updateCartDisplay);
+  citySelect.addEventListener("change", function() {
+    updateCartDisplay();
+  });
+
   placeOrderBtn.addEventListener("click", placeOrder);
-  editOrderBtn.addEventListener("click", () => reviewModal.style.display = "none");
+  editOrderBtn.addEventListener("click", function() {
+    reviewModal.style.display = "none";
+  });
   confirmOrderBtn.addEventListener("click", confirmOrder);
 
   window.addEventListener("click", function(event) {
@@ -438,40 +299,40 @@ document.addEventListener('DOMContentLoaded', async function() {
     }
   });
 
-  // Listen for cross-tab notifications
-  window.addEventListener('storage', function(e) {
-      if (e.key === 'newOrderAlert' && currentUser?.isAdmin) {
-          const pending = localStorage.getItem('pendingNewOrder');
-          if (pending) {
-              const orderData = JSON.parse(pending);
-              startNewOrderNotification();
-              showNewOrderConfirmation(orderData);
-              localStorage.removeItem('pendingNewOrder');
-          }
-      }
-  });
-
   updateCartDisplay();
+  
+  // Test API connection
   testAPIConnection();
 });
 
 // ==================== API FUNCTIONS ====================
 
+/**
+ * Show loading spinner
+ */
 function showLoading() {
   const spinner = document.getElementById('loading-spinner');
   if (spinner) spinner.style.display = 'flex';
 }
 
+/**
+ * Hide loading spinner
+ */
 function hideLoading() {
   const spinner = document.getElementById('loading-spinner');
   if (spinner) spinner.style.display = 'none';
 }
 
+/**
+ * Make API request to Cloudflare Worker
+ */
 async function apiRequest(endpoint, method = 'GET', data = null) {
   showLoading();
   try {
+    // Clean URLs
     let baseUrl = CLOUDFLARE_WORKER_URL;
     if (baseUrl.endsWith('/')) baseUrl = baseUrl.slice(0, -1);
+    
     if (endpoint.startsWith('/')) endpoint = endpoint.slice(1);
     
     const url = `${baseUrl}/${endpoint}`;
@@ -484,6 +345,7 @@ async function apiRequest(endpoint, method = 'GET', data = null) {
     
     if (data) options.body = JSON.stringify(data);
     
+    // Add timeout
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 10000);
     options.signal = controller.signal;
@@ -491,7 +353,9 @@ async function apiRequest(endpoint, method = 'GET', data = null) {
     const response = await fetch(url, options);
     clearTimeout(timeoutId);
     
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
     
     const result = await response.json();
     console.log('📡 API Response:', result);
@@ -502,17 +366,60 @@ async function apiRequest(endpoint, method = 'GET', data = null) {
   } catch (error) {
     hideLoading();
     console.error('❌ API Error:', error);
-    return { status: 'error', message: error.message, fallback: true, offline: true };
+    
+    // Fallback to local storage
+    return { 
+      status: 'error', 
+      message: error.message,
+      fallback: true,
+      offline: true
+    };
   }
 }
 
+// ==================== APPS SCRIPT REQUEST (DISABLED - KEPT FOR REFERENCE) ====================
+/*
+async function appsScriptRequest(action, data = {}) {
+  showLoading();
+  try {
+    const url = new URL(APPS_SCRIPT_URL);
+    url.searchParams.append('action', action);
+    
+    console.log(`📡 Apps Script ${action}:`, data);
+    
+    const response = await fetch(url.toString(), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action, ...data })
+    });
+    
+    const result = await response.json();
+    console.log('📡 Apps Script Response:', result);
+    
+    hideLoading();
+    return result;
+    
+  } catch (error) {
+    hideLoading();
+    console.error('❌ Apps Script Error:', error);
+    return { status: 'error', message: error.message };
+  }
+}
+*/
+
+/**
+ * Test API connection
+ */
 async function testAPIConnection() {
   console.log('🔍 Testing API connections...');
   
+  // Test Cloudflare Worker only
   try {
     const workerTest = await apiRequest('test', 'GET');
     if (workerTest.status === 'success') {
       console.log('✅ Cloudflare Worker connected');
+    } else {
+      console.warn('⚠️ Cloudflare Worker test failed');
     }
   } catch (error) {
     console.warn('⚠️ Cloudflare Worker not reachable');
@@ -521,6 +428,9 @@ async function testAPIConnection() {
 
 // ==================== AUTHENTICATION FUNCTIONS ====================
 
+/**
+ * Handle signup
+ */
 async function handleSignup() {
   const name = document.getElementById('signup-name').value.trim();
   const phone = document.getElementById('signup-phone').value.trim();
@@ -555,12 +465,16 @@ async function handleSignup() {
     isAdmin: phone === '09123456789'
   };
   
+  // Try Cloudflare Worker first
   let result = await apiRequest('api/users', 'POST', userData);
   
   if (result.status === 'success' || result.offline) {
+    // Format phone number before saving to localStorage
     userData.phone = userData.phone.toString().padStart(11, '0');
+    // Format city as string
     userData.city = userData.city.toString();
     
+    // Save to localStorage as backup
     users[phone] = userData;
     localStorage.setItem('users', JSON.stringify(users));
     
@@ -581,6 +495,9 @@ async function handleSignup() {
   }
 }
 
+/**
+ * Handle login
+ */
 async function handleLogin() {
   const phone = document.getElementById('login-phone').value.trim();
   const password = document.getElementById('login-password').value;
@@ -590,13 +507,19 @@ async function handleLogin() {
     return;
   }
   
+  // Try Cloudflare Worker first
   let result = await apiRequest(`api/users?phone=${phone}`, 'GET');
   
   if (result.status === 'success' && result.data) {
     const user = result.data;
     
+    // Format phone number correctly (add leading zero if needed)
     user.phone = user.phone.toString().padStart(11, '0');
+    // Format city as string
     user.city = user.city.toString();
+    
+    // ===== 🔔 FIX: Ensure isAdmin is properly handled =====
+    // Convert to boolean if it's a string
     user.isAdmin = user.isAdmin === true || user.isAdmin === 'true';
     
     if (user.password === password) {
@@ -606,28 +529,17 @@ async function handleLogin() {
       document.getElementById('cust-name').value = user.name || '';
       document.getElementById('cust-contact').value = user.phone || '';
       document.getElementById('cust-address').value = user.address || '';
-      if (user.city) document.getElementById('cust-city').value = user.city;
+      if (user.city) {
+        document.getElementById('cust-city').value = user.city;
+      }
       
       hideAuthModal();
       updateUIForLoggedInUser();
       startSessionTimer();
       alert('✅ Login successful!');
       
-      if (currentUser.isAdmin) {
-          const serverNotifications = await fetchNotificationsFromServer();
-          if (serverNotifications.length > 0) {
-              for (const notification of serverNotifications) {
-                  startNewOrderNotification();
-                  showNewOrderConfirmation({
-                      displayId: notification.orderId,
-                      customerName: notification.customerName,
-                      total: notification.total,
-                      items: notification.items
-                  });
-              }
-              await clearNotificationsOnServer();
-          }
-          
+      // ===== CHECK FOR PENDING NOTIFICATIONS AFTER LOGIN =====
+      if (currentUser.isAdmin === true || currentUser.isAdmin === 'true') {
           const pending = localStorage.getItem('pendingNewOrder');
           if (pending) {
               const orderData = JSON.parse(pending);
@@ -640,15 +552,20 @@ async function handleLogin() {
               }
           }
       }
+      // ======================================================
       
     } else {
       alert('❌ Invalid password');
     }
   } else {
+    // Fallback to localStorage
     const user = users[phone];
     if (user && user.password === password) {
+      // Format phone in localStorage too
       user.phone = user.phone.toString().padStart(11, '0');
       user.city = user.city.toString();
+      
+      // ===== 🔔 FIX: Ensure isAdmin is properly handled =====
       user.isAdmin = user.isAdmin === true || user.isAdmin === 'true';
       
       currentUser = user;
@@ -657,19 +574,48 @@ async function handleLogin() {
       document.getElementById('cust-name').value = user.name || '';
       document.getElementById('cust-contact').value = user.phone || '';
       document.getElementById('cust-address').value = user.address || '';
-      if (user.city) document.getElementById('cust-city').value = user.city;
+      if (user.city) {
+        document.getElementById('cust-city').value = user.city;
+      }
       
       hideAuthModal();
       updateUIForLoggedInUser();
       startSessionTimer();
+      
+      // ===== CHECK FOR PENDING NOTIFICATIONS AFTER LOGIN =====
+      if (currentUser.isAdmin === true || currentUser.isAdmin === 'true') {
+          const pending = localStorage.getItem('pendingNewOrder');
+          if (pending) {
+              const orderData = JSON.parse(pending);
+              if (Date.now() - orderData.timestamp < 3600000) {
+                  setTimeout(() => {
+                      startNewOrderNotification();
+                      showNewOrderConfirmation(orderData);
+                      localStorage.removeItem('pendingNewOrder');
+                  }, 1000);
+              }
+          }
+      }
+      // ======================================================
+      
     } else {
       alert('❌ Phone number not found or invalid password');
     }
   }
 }
 
+/**
+ * Logout user
+ */
 function logout() {
+  // Stop any playing notification
   stopNotification();
+  
+  // Stop notification checker
+  if (notificationCheckerInterval) {
+    clearInterval(notificationCheckerInterval);
+    notificationCheckerInterval = null;
+  }
   
   currentUser = null;
   sessionStorage.removeItem('currentUser');
@@ -683,33 +629,79 @@ function logout() {
   showSection('all');
 }
 
+/**
+ * Show auth modal
+ */
 function showAuthModal() {
   document.getElementById('auth-modal').style.display = 'flex';
   document.body.style.overflow = 'hidden';
 }
 
+/**
+ * Hide auth modal
+ */
 function hideAuthModal() {
   document.getElementById('auth-modal').style.display = 'none';
   document.body.style.overflow = 'auto';
 }
 
+/**
+ * Check for pending notifications periodically
+ */
+function startNotificationChecker() {
+    // Clear existing interval if any
+    if (notificationCheckerInterval) {
+        clearInterval(notificationCheckerInterval);
+    }
+    
+    // Check every 10 seconds for pending notifications
+    notificationCheckerInterval = setInterval(() => {
+        if (currentUser && (currentUser.isAdmin === true || currentUser.isAdmin === 'true')) {
+            const pending = localStorage.getItem('pendingNewOrder');
+            if (pending) {
+                const orderData = JSON.parse(pending);
+                // Check if notification is less than 1 hour old
+                if (Date.now() - orderData.timestamp < 3600000) {
+                    // Show notification immediately
+                    startNewOrderNotification();
+                    showNewOrderConfirmation(orderData);
+                    localStorage.removeItem('pendingNewOrder');
+                }
+            }
+        }
+    }, 10000); // Check every 10 seconds
+}
+
+/**
+ * Update UI for logged in user
+ */
 function updateUIForLoggedInUser() {
   document.getElementById('user-info-sidebar').style.display = 'block';
   document.getElementById('sidebar-user-name').textContent = `👤 ${currentUser.name}`;
   document.getElementById('sidebar-user-phone').textContent = `📱 ${currentUser.phone}`;
   
+  // ===== 🔔 SHOW/HIDE SOUND BUTTON BASED ON ADMIN STATUS (FIXED) =====
   const soundControl = document.querySelector('.sound-control');
   if (soundControl) {
+    // Add debug logs to see what's happening
+    console.log('Current user:', currentUser);
+    console.log('Is admin value:', currentUser.isAdmin);
+    console.log('Is admin type:', typeof currentUser.isAdmin);
+    
+    // Ensure we're checking correctly (handle both boolean and string)
     const isAdmin = currentUser.isAdmin === true || currentUser.isAdmin === 'true';
     
     if (isAdmin) {
-      soundControl.style.display = 'block';
+      soundControl.style.display = 'block'; // Show for admin
       console.log('🔔 Sound button SHOWN (admin)');
-      // REMOVED: startUpdateSystem() - no more auto-fetching
+      // Start notification checker for admin
+      startNotificationChecker();
     } else {
-      soundControl.style.display = 'none';
+      soundControl.style.display = 'none';  // Hide for regular users
+      console.log('🔇 Sound button HIDDEN (regular user)');
     }
   }
+  // ============================================================
   
   document.getElementById('cust-name').readOnly = false;
   document.getElementById('cust-contact').readOnly = false;
@@ -721,15 +713,21 @@ function updateUIForLoggedInUser() {
   document.getElementById('logout-btn').style.display = 'block';
   document.getElementById('history-link').style.display = 'block';
   
+  // Check admin status for admin links (using same fix)
   const isAdmin = currentUser.isAdmin === true || currentUser.isAdmin === 'true';
   if (isAdmin) {
     document.getElementById('admin-link').style.display = 'block';
     document.getElementById('stock-link').style.display = 'block';
   }
   
-  document.querySelectorAll('.add-to-cart').forEach(btn => btn.disabled = false);
+  document.querySelectorAll('.add-to-cart').forEach(btn => {
+    btn.disabled = false;
+  });
 }
 
+/**
+ * Update UI for logged out user
+ */
 function updateUIForLoggedOutUser() {
   document.getElementById('user-info-sidebar').style.display = 'none';
   document.getElementById('logout-btn').style.display = 'none';
@@ -737,13 +735,19 @@ function updateUIForLoggedOutUser() {
   document.getElementById('admin-link').style.display = 'none';
   document.getElementById('stock-link').style.display = 'none';
   
+  // ===== HIDE SOUND BUTTON WHEN LOGGED OUT =====
   const soundControl = document.querySelector('.sound-control');
-  if (soundControl) soundControl.style.display = 'none';
+  if (soundControl) {
+    soundControl.style.display = 'none';
+  }
+  // ==============================================
   
   document.getElementById('place-order').disabled = true;
   document.getElementById('place-order').textContent = '🔒 Login to Order';
   
-  document.querySelectorAll('.add-to-cart').forEach(btn => btn.disabled = true);
+  document.querySelectorAll('.add-to-cart').forEach(btn => {
+    btn.disabled = true;
+  });
   
   document.getElementById('cust-name').value = '';
   document.getElementById('cust-contact').value = '';
@@ -751,6 +755,9 @@ function updateUIForLoggedOutUser() {
   document.getElementById('cust-city').selectedIndex = 0;
 }
 
+/**
+ * Switch auth tab
+ */
 function switchAuthTab(tab) {
   document.querySelectorAll('.auth-tab').forEach(t => t.classList.remove('active'));
   document.querySelectorAll('.auth-form').forEach(f => f.classList.remove('active'));
@@ -764,6 +771,9 @@ function switchAuthTab(tab) {
   }
 }
 
+/**
+ * Toggle password visibility
+ */
 function togglePassword(inputId) {
   const input = document.getElementById(inputId);
   input.type = input.type === 'password' ? 'text' : 'password';
@@ -771,6 +781,9 @@ function togglePassword(inputId) {
 
 // ==================== FORGOT PASSWORD FUNCTIONS ====================
 
+/**
+ * Show forgot password modal
+ */
 function showForgotPassword() {
   document.getElementById('auth-modal').style.display = 'none';
   document.getElementById('forgot-modal').style.display = 'flex';
@@ -779,16 +792,25 @@ function showForgotPassword() {
   document.getElementById('forgot-message').innerHTML = '';
 }
 
+/**
+ * Close forgot password modal
+ */
 function closeForgotModal() {
   document.getElementById('forgot-modal').style.display = 'none';
   document.getElementById('auth-modal').style.display = 'flex';
 }
 
+/**
+ * Back to step 1 of forgot password
+ */
 function backToStep1() {
   document.getElementById('forgot-step1').style.display = 'block';
   document.getElementById('forgot-step2').style.display = 'none';
 }
 
+/**
+ * Send reset code
+ */
 async function sendResetCode() {
   const phone = document.getElementById('forgot-phone').value.trim();
   const email = document.getElementById('forgot-email').value.trim();
@@ -799,18 +821,35 @@ async function sendResetCode() {
     return;
   }
   
+  // Check user exists in localStorage
   const user = users[phone];
   
   if (user && user.email === email) {
+    // Generate 6-digit code
     const code = Math.floor(100000 + Math.random() * 900000).toString();
     const expiry = Date.now() + 15 * 60 * 1000;
     
-    resetCodes[phone] = { code, email, expiry };
+    // Store code in memory
+    resetCodes[phone] = {
+      code,
+      email,
+      expiry
+    };
+    
     messageDiv.innerHTML = '<div class="success-message">Sending reset code...</div>';
     
     try {
-      if (typeof emailjs === 'undefined') {
-        messageDiv.innerHTML = `<div class="success-message">⚠️ Email service unavailable<br><strong>Your reset code is: ${code}</strong></div>`;
+      // Check if EmailJS is available
+      if (typeof emailjs === 'undefined' || EMAILJS_PUBLIC_KEY === 'YOUR_ACTUAL_PUBLIC_KEY') {
+        // Fallback - show code directly
+        messageDiv.innerHTML = `
+          <div class="success-message">
+            ⚠️ Email service not configured<br>
+            <strong>Your reset code is: ${code}</strong><br>
+            <small>Please use this code to reset your password</small>
+          </div>
+        `;
+        
         setTimeout(() => {
           document.getElementById('forgot-step1').style.display = 'none';
           document.getElementById('forgot-step2').style.display = 'block';
@@ -818,26 +857,50 @@ async function sendResetCode() {
         return;
       }
       
+      // Send email via EmailJS
       const templateParams = {
         to_email: email,
         from_name: 'Sky Eats',
         user_name: user.name || 'Customer',
         reset_code: code,
-        user_phone: phone
+        user_phone: phone,
+        message: `Your password reset code is: ${code}. This code will expire in 15 minutes.`
       };
       
-      const response = await emailjs.send(EMAILJS_SERVICE_ID, EMAILJS_TEMPLATE_ID, templateParams);
+      const response = await emailjs.send(
+        EMAILJS_SERVICE_ID,
+        EMAILJS_TEMPLATE_ID,
+        templateParams
+      );
       
       if (response.status === 200) {
-        messageDiv.innerHTML = `<div class="success-message">✅ Reset code sent to ${email}</div>`;
+        messageDiv.innerHTML = `
+          <div class="success-message">
+            ✅ Reset code sent to ${email}<br>
+            <small>Please check your inbox (also check spam folder)</small>
+          </div>
+        `;
+        
         setTimeout(() => {
           document.getElementById('forgot-step1').style.display = 'none';
           document.getElementById('forgot-step2').style.display = 'block';
           messageDiv.innerHTML = '';
         }, 2000);
+      } else {
+        throw new Error('Failed to send email');
       }
     } catch (error) {
-      messageDiv.innerHTML = `<div class="success-message">⚠️ Email service unavailable<br><strong>Your reset code is: ${code}</strong></div>`;
+      console.error('EmailJS Error:', error);
+      
+      // Fallback - show code directly
+      messageDiv.innerHTML = `
+        <div class="success-message">
+          ⚠️ Email service unavailable<br>
+          <strong>Your reset code is: ${code}</strong><br>
+          <small>Please use this code to reset your password</small>
+        </div>
+      `;
+      
       setTimeout(() => {
         document.getElementById('forgot-step1').style.display = 'none';
         document.getElementById('forgot-step2').style.display = 'block';
@@ -849,6 +912,9 @@ async function sendResetCode() {
   }
 }
 
+/**
+ * Reset password
+ */
 async function resetPassword() {
   const phone = document.getElementById('forgot-phone').value.trim();
   const code = document.getElementById('verification-code').value.trim();
@@ -873,39 +939,75 @@ async function resetPassword() {
   
   const resetData = resetCodes[phone];
   
-  if (!resetData || Date.now() > resetData.expiry || resetData.code !== code) {
-    alert('Invalid or expired reset code');
+  if (!resetData) {
+    alert('No reset code found. Please request again.');
     backToStep1();
+    return;
+  }
+  
+  if (Date.now() > resetData.expiry) {
+    alert('Reset code has expired. Please request again.');
+    delete resetCodes[phone];
+    backToStep1();
+    return;
+  }
+  
+  if (resetData.code !== code) {
+    alert('Invalid verification code');
     return;
   }
   
   messageDiv.innerHTML = '<div class="success-message">Updating password...</div>';
   
   try {
-    let updateResult = await apiRequest('api/users', 'PUT', { phone, password: newPassword });
+    // Try Cloudflare Worker first
+    let updateResult = await apiRequest('api/users', 'PUT', {
+      phone: phone,
+      password: newPassword
+    });
     
     if (updateResult.status === 'success') {
-      if (users[phone]) users[phone].password = newPassword;
-      localStorage.setItem('users', JSON.stringify(users));
+      // Update localStorage
+      if (users[phone]) {
+        users[phone].password = newPassword;
+        localStorage.setItem('users', JSON.stringify(users));
+      }
       
-      messageDiv.innerHTML = '<div class="success-message">✅ Password updated successfully!</div>';
+      messageDiv.innerHTML = `
+        <div class="success-message">
+          ✅ Password updated successfully!<br>
+          <small>Redirecting to login...</small>
+        </div>
+      `;
+      
       delete resetCodes[phone];
       
       setTimeout(() => {
         closeForgotModal();
+        document.getElementById('forgot-phone').value = '';
+        document.getElementById('forgot-email').value = '';
+        document.getElementById('verification-code').value = '';
+        document.getElementById('new-password').value = '';
+        document.getElementById('confirm-new-password').value = '';
         switchAuthTab('login');
       }, 2000);
+    } else {
+      messageDiv.innerHTML = '<div class="error-message">Failed to update password. Please try again.</div>';
     }
   } catch (error) {
-    messageDiv.innerHTML = '<div class="error-message">Error updating password</div>';
+    console.error('Password update error:', error);
+    messageDiv.innerHTML = '<div class="error-message">Error updating password. Please try again.</div>';
   }
 }
 
 // ==================== SESSION MANAGEMENT ====================
 
+/**
+ * Start session timer
+ */
 function startSessionTimer() {
-  let timeLeft = 120 * 60;
-  const warningTime = 5 * 60;
+  let timeLeft = 120 * 60; // 2 hours in seconds
+  const warningTime = 5 * 60; // 5 minutes
   
   clearInterval(sessionTimer);
   clearInterval(warningTimer);
@@ -926,6 +1028,9 @@ function startSessionTimer() {
   }, 1000);
 }
 
+/**
+ * Show session warning
+ */
 function showSessionWarning(secondsLeft) {
   const minutes = Math.floor(secondsLeft / 60);
   const seconds = secondsLeft % 60;
@@ -948,18 +1053,28 @@ function showSessionWarning(secondsLeft) {
 
 // ==================== MENU FUNCTIONS ====================
 
+/**
+ * Initialize stock in localStorage
+ */
 function initializeStock() {
   for (let category in menuItems) {
     menuItems[category].forEach((item, index) => {
       const stockKey = `stock_${category}_${index}`;
-      if (!localStorage.getItem(stockKey)) localStorage.setItem(stockKey, '10');
+      if (!localStorage.getItem(stockKey)) {
+        localStorage.setItem(stockKey, '10');
+      }
       
       const promoKey = `promo_${category}_${index}`;
-      if (!localStorage.getItem(promoKey)) localStorage.setItem(promoKey, 'none');
+      if (!localStorage.getItem(promoKey)) {
+        localStorage.setItem(promoKey, 'none');
+      }
     });
   }
 }
 
+/**
+ * Render all menu items
+ */
 function renderMenuItems() {
   for (let category in menuItems) {
     const container = document.getElementById(`${category}-products`);
@@ -982,6 +1097,9 @@ function renderMenuItems() {
   }
 }
 
+/**
+ * Create menu item card
+ */
 function createMenuItemCard(item, category, index) {
   const card = document.createElement('div');
   card.className = 'menu-card';
@@ -1065,6 +1183,9 @@ function createMenuItemCard(item, category, index) {
   return card;
 }
 
+/**
+ * Add item to cart
+ */
 function addToCart(card, item) {
   const qtyInput = card.querySelector('.qty-input');
   const qty = parseInt(qtyInput.value);
@@ -1075,11 +1196,13 @@ function addToCart(card, item) {
     return;
   }
   
+  // Get current stock from localStorage
   const category = card.dataset.category;
   const index = card.dataset.index;
   const stockKey = `stock_${category}_${index}`;
   const availableStock = parseInt(localStorage.getItem(stockKey)) || 0;
   
+  // Check if enough stock available
   if (qty > availableStock) {
     alert(`❌ Only ${availableStock} available in stock. You tried to add ${qty}.`);
     qtyInput.value = 0;
@@ -1101,9 +1224,16 @@ function addToCart(card, item) {
   
   const itemTotal = (item.price + addonsTotal) * qty;
   let itemName = item.name;
-  if (flavorSelect && flavorSelect.value) itemName += ` (${flavorSelect.value})`;
+  if (flavorSelect && flavorSelect.value) {
+    itemName += ` (${flavorSelect.value})`;
+  }
   
-  cart.push({ name: itemName, qty, addons: addonsList.join(', '), subtotal: itemTotal });
+  cart.push({
+    name: itemName,
+    qty: qty,
+    addons: addonsList.join(', '),
+    subtotal: itemTotal
+  });
   
   qtyInput.value = 0;
   if (flavorSelect) flavorSelect.selectedIndex = 0;
@@ -1113,6 +1243,9 @@ function addToCart(card, item) {
   alert(`${qty}x ${itemName} added to cart!`);
 }
 
+/**
+ * Update cart display
+ */
 function updateCartDisplay() {
   if (cart.length === 0) {
     cartItems.innerHTML = "<li>No items yet</li>";
@@ -1128,15 +1261,19 @@ function updateCartDisplay() {
   let hasStockIssue = false;
   
   cart.forEach((item, index) => {
+    // Check if this cart item exceeds available stock
     let stockAvailable = true;
     let availableQty = 0;
     
+    // Find current stock for this item
     for (let category in menuItems) {
       menuItems[category].forEach((menuItem, idx) => {
         if (menuItem.name === item.name.split(' (')[0]) {
           const stockKey = `stock_${category}_${idx}`;
           availableQty = parseInt(localStorage.getItem(stockKey)) || 0;
-          if (item.qty > availableQty) stockAvailable = false;
+          if (item.qty > availableQty) {
+            stockAvailable = false;
+          }
         }
       });
     }
@@ -1169,8 +1306,14 @@ function updateCartDisplay() {
     totalPayMsg.innerText = `Subtotal: ₱${subtotal}`;
   }
   
-  placeOrderBtn.disabled = hasStockIssue || !currentUser;
-  placeOrderBtn.title = hasStockIssue ? "Remove items with insufficient stock" : "";
+  // Disable place order if stock issues
+  if (hasStockIssue) {
+    placeOrderBtn.disabled = true;
+    placeOrderBtn.title = "Remove items with insufficient stock";
+  } else {
+    placeOrderBtn.disabled = !currentUser;
+    placeOrderBtn.title = "";
+  }
 
   document.querySelectorAll('.remove-item').forEach(btn => {
     btn.addEventListener('click', function() {
@@ -1181,16 +1324,25 @@ function updateCartDisplay() {
   });
 }
 
+/**
+ * Calculate cart subtotal
+ */
 function calculateSubtotal() {
   return cart.reduce((sum, item) => sum + item.subtotal, 0);
 }
 
+/**
+ * Get delivery fee
+ */
 function getDeliveryFee() {
   return parseInt(citySelect.value) || 0;
 }
 
 // ==================== ORDER FUNCTIONS ====================
 
+/**
+ * Place order (show review modal)
+ */
 function placeOrder() {
   if (cart.length === 0) {
     alert("Your cart is empty. Please add items before placing an order.");
@@ -1210,7 +1362,9 @@ function placeOrder() {
   let itemsHTML = "<ul style='list-style-type:none; padding-left:0;'>";
   cart.forEach(item => {
     itemsHTML += `<li style='margin-bottom:8px;'>• ${item.qty}x ${item.name}`;
-    if (item.addons) itemsHTML += `<br><small style='margin-left:15px;'>Add-ons: ${item.addons}</small>`;
+    if (item.addons) {
+      itemsHTML += `<br><small style='margin-left:15px;'>Add-ons: ${item.addons}</small>`;
+    }
     itemsHTML += `<br><strong>₱${item.subtotal}</strong></li>`;
   });
   itemsHTML += "</ul>";
@@ -1235,7 +1389,11 @@ function placeOrder() {
   reviewModal.style.display = "flex";
 }
 
+/**
+ * Confirm and submit order
+ */
 async function confirmOrder() {
+  // Format customer phone and city before sending
   const formattedPhone = currentUser.phone.toString().padStart(11, '0');
   const formattedCity = currentUser.city.toString();
   
@@ -1257,53 +1415,56 @@ async function confirmOrder() {
     timestamp: new Date().toISOString()
   };
   
+  // Try Cloudflare Worker first
   let result = await apiRequest('api/orders', 'POST', order);
   
   if (result.status === 'success' || result.offline) {
-    const localOrder = { id: Date.now(), ...order };
+    // Save to localStorage
+    const localOrder = {
+      id: Date.now(),
+      ...order
+    };
     orders.push(localOrder);
     localStorage.setItem('orders', JSON.stringify(orders));
     
+    // ===== 🔔 FIXED: ALWAYS trigger notification for admin, regardless of which page they're on =====
     const isAdmin = currentUser?.isAdmin === true || currentUser?.isAdmin === 'true';
     
-    const notification = {
-        fullOrderId: localOrder.id,
+    if (isAdmin) {
+      // If admin is placing order, notify immediately with a popup that appears NOW
+      setTimeout(() => {
+        startNewOrderNotification();
+        showNewOrderConfirmation({
+          orderId: localOrder.id.toString().slice(-6),
+          customerName: localOrder.customerName,
+          total: localOrder.total,
+          items: localOrder.items.length
+        });
+      }, 500); // Small delay to ensure order is saved first
+    } else {
+      // For customer orders, store for when admin logs in
+      localStorage.setItem('pendingNewOrder', JSON.stringify({
         orderId: localOrder.id.toString().slice(-6),
         customerName: localOrder.customerName,
         total: localOrder.total,
         items: localOrder.items.length,
-        phone: currentUser.phone,
-        timestamp: new Date().toISOString()
-    };
-    
-    await storeNotificationOnServer(notification);
-    
-    const pendingOrder = {
-      fullOrderId: localOrder.id,
-      orderId: localOrder.id.toString().slice(-6),
-      customerName: localOrder.customerName,
-      total: localOrder.total,
-      items: localOrder.items.length,
-      timestamp: Date.now()
-    };
-    
-    localStorage.setItem('pendingNewOrder', JSON.stringify(pendingOrder));
-    
-    if (isAdmin) {
-      setTimeout(() => {
+        timestamp: Date.now()
+      }));
+      
+      // Also trigger notification if admin is currently logged in (maybe they're on another tab)
+      if (currentUser && (currentUser.isAdmin === true || currentUser.isAdmin === 'true')) {
         startNewOrderNotification();
         showNewOrderConfirmation({
-            displayId: pendingOrder.orderId,
-            fullOrderId: pendingOrder.fullOrderId,
-            customerName: pendingOrder.customerName,
-            total: pendingOrder.total,
-            items: pendingOrder.items
+          orderId: localOrder.id.toString().slice(-6),
+          customerName: localOrder.customerName,
+          total: localOrder.total,
+          items: localOrder.items.length
         });
-      }, 500);
+      }
     }
+    // ==============================================
     
-    localStorage.setItem('newOrderAlert', Date.now().toString());
-    
+    // Update local stock
     cart.forEach(cartItem => {
       for (let category in menuItems) {
         menuItems[category].forEach((item, index) => {
@@ -1326,24 +1487,25 @@ async function confirmOrder() {
   }
 }
 
+/**
+ * Check for pending new order when admin panel opens
+ */
 function checkForPendingNewOrder() {
     const pending = localStorage.getItem('pendingNewOrder');
     if (pending && currentUser?.isAdmin) {
         const orderData = JSON.parse(pending);
+        // Check if notification is less than 1 hour old
         if (Date.now() - orderData.timestamp < 3600000) {
             startNewOrderNotification();
-            showNewOrderConfirmation({
-                displayId: orderData.orderId,
-                fullOrderId: orderData.fullOrderId,
-                customerName: orderData.customerName,
-                total: orderData.total,
-                items: orderData.items
-            });
+            showNewOrderConfirmation(orderData);
             localStorage.removeItem('pendingNewOrder');
         }
     }
 }
 
+/**
+ * Show order history
+ */
 function showOrderHistory() {
   if (!currentUser) return;
   
@@ -1387,6 +1549,9 @@ function showOrderHistory() {
   document.getElementById('content-area').innerHTML = historyHTML;
 }
 
+/**
+ * Render order status tracker
+ */
 function renderOrderStatusTracker(order) {
   const currentStatusIndex = orderStatusSequence.findIndex(s => s.key === order.status);
   
@@ -1413,148 +1578,86 @@ function renderOrderStatusTracker(order) {
 
 // ==================== ADMIN FUNCTIONS ====================
 
-async function showAdminPanel() {
+/**
+ * Show admin panel
+ */
+function showAdminPanel() {
   if (!currentUser || !currentUser.isAdmin) return;
   
-  showLoading();
+  // Check for pending new orders
+  checkForPendingNewOrder();
   
-  try {
-    console.log('📡 Fetching orders from server...');
-    const result = await apiRequest('api/orders', 'GET');
+  let adminHTML = '<div class="admin-panel">';
+  adminHTML += '<button class="back-btn" onclick="showSection(\'all\')">← Back to Menu</button>';
+  adminHTML += '<div class="admin-header"><h2>👑 Admin Panel - Manage Orders</h2>';
+  adminHTML += '<button onclick="showStockManagement()">📦 Manage Stock & Promo</button>';
+  adminHTML += '</div>';
+  
+  if (orders.length === 0) {
+    adminHTML += '<p style="text-align:center; padding:50px;">No orders yet</p>';
+  } else {
+    adminHTML += '<div class="orders-table"><table>';
+    adminHTML += '<tr><th>Order ID</th><th>Customer</th><th>Items</th><th>Total</th><th>Status</th><th>Actions</th><th>Time</th></tr>';
     
-    if (result.status === 'success' && result.data) {
-      orders = result.data;
-      localStorage.setItem('orders', JSON.stringify(orders));
-      console.log(`✅ Loaded ${orders.length} orders from server`);
-    }
-    
-    await cleanupStaleOrders();
-    
-    if (currentUser?.isAdmin) {
-        const serverNotifications = await fetchNotificationsFromServer(lastNotificationCheck);
-        if (serverNotifications.length > 0) {
-            for (const notification of serverNotifications) {
-                startNewOrderNotification();
-                showNewOrderConfirmation({
-                    displayId: notification.orderId,
-                    customerName: notification.customerName,
-                    total: notification.total,
-                    items: notification.items
-                });
-            }
-            await clearNotificationsOnServer();
-            lastNotificationCheck = new Date().toISOString();
-        }
-    }
-    
-    checkForPendingNewOrder();
-    
-    let adminHTML = '<div class="admin-panel">';
-    adminHTML += '<button class="back-btn" onclick="showSection(\'all\')">← Back to Menu</button>';
-    adminHTML += '<div class="admin-header">';
-    adminHTML += '<h2>👑 Admin Panel - Manage Orders</h2>';
-    adminHTML += '<div>';
-    adminHTML += '<button onclick="showStockManagement()">📦 Manage Stock & Promo</button>';
-    adminHTML += '<button onclick="refreshOrders()" style="margin-left:10px; background: #87ceeb;">🔄 Refresh</button>';
-    adminHTML += '</div>';
-    adminHTML += '</div>';
-    
-    if (orders.length === 0) {
-      adminHTML += '<p style="text-align:center; padding:50px;">No orders yet</p>';
-    } else {
-      adminHTML += '<div class="orders-table"><table>';
-      adminHTML += '<tr><th>Order ID</th><th>Customer</th><th>Items</th><th>Total</th><th>Status</th><th>Actions</th><th>Time</th></tr>';
+    [...orders].reverse().forEach(order => {
+      const statusInfo = orderStatusSequence.find(s => s.key === order.status);
+      let statusClass = `status-${order.status}`;
       
-      [...orders].reverse().forEach(order => {
-        const statusInfo = orderStatusSequence.find(s => s.key === order.status);
-        let statusClass = `status-${order.status}`;
-        
-        const currentIndex = orderStatusSequence.findIndex(s => s.key === order.status);
-        const nextStatuses = orderStatusSequence.slice(currentIndex + 1);
-        
-        let actionButtons = '';
-        if (nextStatuses.length > 0) {
-          actionButtons = nextStatuses.map(s => 
-            `<button class="update-status-btn" onclick="updateOrderStatus('${order.id}', '${s.key}')">${s.label}</button>`
-          ).join('');
-        } else {
-          actionButtons = '<span style="color:#999;">Completed</span>';
-        }
-        
-        const fullOrderId = order.id || order.orderId;
-        const displayId = fullOrderId ? fullOrderId.toString().slice(-6) : 'N/A';
-        
-        adminHTML += `
-          <tr>
-            <td>#${displayId}<br><small style="font-size:10px; color:#999;" title="${fullOrderId}">${fullOrderId}</small></td>
-            <td>${order.customerName}<br><small>${order.customerPhone}</small></td>
-            <td>${order.items.map(i => `${i.qty}x ${i.name}`).join('<br>')}</td>
-            <td>₱${order.total}</td>
-            <td><span class="status-badge ${statusClass}">${statusInfo?.label || order.status}</span></td>
-            <td>${actionButtons}</td>
-            <td>${new Date(order.timestamp).toLocaleString()}</td>
-          </tr>
-        `;
-      });
+      const currentIndex = orderStatusSequence.findIndex(s => s.key === order.status);
+      const nextStatuses = orderStatusSequence.slice(currentIndex + 1);
       
-      adminHTML += '</table></div>';
-    }
-    
-    adminHTML += '</div>';
-    document.getElementById('content-area').innerHTML = adminHTML;
-  } catch (error) {
-    console.error('Error loading admin panel:', error);
-    alert('Error loading orders. Please try again.');
-  } finally {
-    hideLoading();
-  }
-}
-
-async function refreshOrders() {
-    await showAdminPanel();
-}
-
-async function updateOrderStatus(orderId, newStatus) {
-  const order = orders.find(o => {
-      const fullId = o.id || o.orderId;
-      return fullId === orderId || fullId.toString().endsWith(orderId);
-  });
-  
-  if (!order) return false;
-  
-  const fullOrderId = order.id || order.orderId;
-  
-  try {
-    showLoading();
-    
-    const result = await apiRequest('api/orders', 'PUT', {
-      id: fullOrderId,
-      status: newStatus
-    });
-    
-    if (result.status === 'success') {
-      order.status = newStatus;
-      localStorage.setItem('orders', JSON.stringify(orders));
-      
-      if (document.getElementById('content-area').innerHTML.includes('Admin Panel')) {
-        await showAdminPanel();
+      let actionButtons = '';
+      if (nextStatuses.length > 0) {
+        actionButtons = nextStatuses.map(s => 
+          `<button class="update-status-btn" onclick="updateOrderStatus(${order.id}, '${s.key}')">${s.label}</button>`
+        ).join('');
+      } else {
+        actionButtons = '<span style="color:#999;">Completed</span>';
       }
       
-      alert(`✅ Order status updated to ${getStatusLabel(newStatus)}`);
-      return true;
-    } else {
-      alert('❌ Failed to update status on server');
-      return false;
-    }
-  } catch (error) {
-    console.error('Error updating order status:', error);
-    alert('❌ Network error. Please try again.');
-    return false;
-  } finally {
-    hideLoading();
+      adminHTML += `
+        <tr>
+          <td>#${order.id?.toString().slice(-6) || 'N/A'}</td>
+          <td>${order.customerName}<br><small>${order.customerPhone}</small></td>
+          <td>${order.items.map(i => `${i.qty}x ${i.name}`).join('<br>')}</td>
+          <td>₱${order.total}</td>
+          <td><span class="status-badge ${statusClass}">${statusInfo?.label || order.status}</span></td>
+          <td>${actionButtons}</td>
+          <td>${new Date(order.timestamp).toLocaleString()}</td>
+        </tr>
+      `;
+    });
+    
+    adminHTML += '</table></div>';
   }
+  
+  adminHTML += '</div>';
+  document.getElementById('content-area').innerHTML = adminHTML;
 }
 
+/**
+ * Update order status
+ */
+function updateOrderStatus(orderId, newStatus) {
+  const order = orders.find(o => o.id === orderId);
+  if (order) {
+    const oldStatus = order.status;
+    order.status = newStatus;
+    localStorage.setItem('orders', JSON.stringify(orders));
+    
+    if (document.getElementById('content-area').innerHTML.includes('Admin Panel')) {
+      showAdminPanel();
+    }
+    
+    alert(`✅ Order status updated to ${getStatusLabel(newStatus)}`);
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Get status label
+ */
 function getStatusLabel(status) {
   const statusInfo = orderStatusSequence.find(s => s.key === status);
   return statusInfo ? statusInfo.label : status;
@@ -1562,16 +1665,128 @@ function getStatusLabel(status) {
 
 // ==================== STOCK MANAGEMENT FUNCTIONS ====================
 
+/**
+ * Show stock management panel
+ */
 function showStockManagement() {
-    // Your existing stock management code - unchanged
-    // ... (keep as is)
+  if (!currentUser || !currentUser.isAdmin) return;
+  
+  let totalProducts = 0;
+  let inStock = 0;
+  let lowStock = 0;
+  let outOfStock = 0;
+  
+  for (let category in menuItems) {
+    menuItems[category].forEach((item, index) => {
+      totalProducts++;
+      const stockKey = `stock_${category}_${index}`;
+      const stock = parseInt(localStorage.getItem(stockKey)) || 0;
+      
+      if (stock <= 0) outOfStock++;
+      else if (stock < 5) lowStock++;
+      else inStock++;
+    });
+  }
+  
+  let stockHTML = '<div class="stock-management">';
+  
+  stockHTML += '<div class="stock-header">';
+  stockHTML += '<div>';
+  stockHTML += '<button class="back-btn" onclick="showSection(\'all\')">← Back to Menu</button>';
+  stockHTML += '<h2 style="margin-top:15px;">📦 Stock & Promo Management</h2>';
+  stockHTML += '</div>';
+  stockHTML += '<div class="stock-actions">';
+  stockHTML += '<input type="text" class="search-stock" id="stockSearch" placeholder="🔍 Search products..." onkeyup="filterStockTable()">';
+  stockHTML += '<button class="export-btn" onclick="exportStockReport()">📊 Export Report</button>';
+  stockHTML += '<button class="reset-all-btn" onclick="resetAllStock()">🔄 Reset All to 10</button>';
+  stockHTML += '</div>';
+  stockHTML += '</div>';
+  
+  stockHTML += '<div class="stock-summary-cards">';
+  stockHTML += `<div class="summary-card"><h4>Total Products</h4><div class="number">${totalProducts}</div></div>`;
+  stockHTML += `<div class="summary-card"><h4>In Stock</h4><div class="number" style="color:#28a745;">${inStock}</div></div>`;
+  stockHTML += `<div class="summary-card"><h4>Low Stock</h4><div class="number" style="color:#ffc107;">${lowStock}</div></div>`;
+  stockHTML += `<div class="summary-card"><h4>Out of Stock</h4><div class="number" style="color:#dc3545;">${outOfStock}</div></div>`;
+  stockHTML += '</div>';
+  
+  stockHTML += '<div class="stock-table-container">';
+  stockHTML += '<table class="stock-table" id="stockTable">';
+  stockHTML += '<thead><tr>';
+  stockHTML += '<th>Product</th>';
+  stockHTML += '<th>Category</th>';
+  stockHTML += '<th>Price</th>';
+  stockHTML += '<th>Current Stock</th>';
+  stockHTML += '<th>Status</th>';
+  stockHTML += '<th>Promo Badge</th>';
+  stockHTML += '<th>Actions</th>';
+  stockHTML += '</tr></thead>';
+  stockHTML += '<tbody>';
+  
+  for (let category in menuItems) {
+    menuItems[category].forEach((item, index) => {
+      const stockKey = `stock_${category}_${index}`;
+      const promoKey = `promo_${category}_${index}`;
+      const currentStock = parseInt(localStorage.getItem(stockKey)) || 0;
+      const currentPromo = localStorage.getItem(promoKey) || 'none';
+      
+      let statusClass = 'status-in-stock';
+      let statusText = 'In Stock';
+      if (currentStock <= 0) {
+        statusClass = 'status-out-of-stock';
+        statusText = 'Out of Stock';
+      } else if (currentStock < 5) {
+        statusClass = 'status-low-stock';
+        statusText = 'Low Stock';
+      }
+      
+      let promoOptionsHTML = '';
+      promoOptions.forEach(option => {
+        const selected = option.value === currentPromo ? 'selected' : '';
+        promoOptionsHTML += `<option value="${option.value}" ${selected}>${option.label}</option>`;
+      });
+      
+      stockHTML += `
+        <tr class="stock-row" data-product="${item.name.toLowerCase()}" data-category="${category.toLowerCase()}">
+          <td class="product-name">${item.name}</td>
+          <td><span class="category-badge">${category}</span></td>
+          <td>₱${item.price}</td>
+          <td>
+            <input type="number" id="stock_${category}_${index}" value="${currentStock}" min="0" class="stock-input" 
+                   onchange="validateStock(this)" onkeyup="validateStock(this)">
+          </td>
+          <td><span class="status-badge-stock ${statusClass}">${statusText}</span></td>
+          <td>
+            <select id="promo_${category}_${index}" class="promo-select">
+              ${promoOptionsHTML}
+            </select>
+          </td>
+          <td>
+            <button class="save-stock-btn" onclick="updateStock('${category}', ${index})">💾 Save Changes</button>
+          </td>
+        </tr>
+      `;
+    });
+  }
+  
+  stockHTML += '</tbody></table>';
+  stockHTML += '</div></div>';
+  
+  document.getElementById('content-area').innerHTML = stockHTML;
 }
 
+/**
+ * Validate stock input
+ */
 function validateStock(input) {
   let value = parseInt(input.value);
-  if (isNaN(value) || value < 0) input.value = 0;
+  if (isNaN(value) || value < 0) {
+    input.value = 0;
+  }
 }
 
+/**
+ * Update stock in localStorage
+ */
 function updateStock(category, index) {
   const stockInput = document.getElementById(`stock_${category}_${index}`);
   const promoSelect = document.getElementById(`promo_${category}_${index}`);
@@ -1587,6 +1802,9 @@ function updateStock(category, index) {
   renderMenuItems();
 }
 
+/**
+ * Reset all stock to 10
+ */
 function resetAllStock() {
   if (confirm('⚠️ Reset ALL stock to 10? This cannot be undone.')) {
     for (let category in menuItems) {
@@ -1600,6 +1818,9 @@ function resetAllStock() {
   }
 }
 
+/**
+ * Filter stock table by search
+ */
 function filterStockTable() {
   const searchInput = document.getElementById('stockSearch');
   if (!searchInput) return;
@@ -1610,10 +1831,17 @@ function filterStockTable() {
   rows.forEach(row => {
     const product = row.getAttribute('data-product') || '';
     const category = row.getAttribute('data-category') || '';
-    row.style.display = (product.includes(searchText) || category.includes(searchText)) ? '' : 'none';
+    if (product.includes(searchText) || category.includes(searchText)) {
+      row.style.display = '';
+    } else {
+      row.style.display = 'none';
+    }
   });
 }
 
+/**
+ * Export stock report as CSV
+ */
 function exportStockReport() {
   let csv = 'Product,Category,Price,Current Stock,Status,Promo Badge\n';
   
@@ -1641,6 +1869,9 @@ function exportStockReport() {
   window.URL.revokeObjectURL(url);
 }
 
+/**
+ * Show notification
+ */
 function showNotification(message) {
   const notification = document.createElement('div');
   notification.style.position = 'fixed';
@@ -1664,6 +1895,9 @@ function showNotification(message) {
 
 // ==================== SECTION NAVIGATION ====================
 
+/**
+ * Show menu section
+ */
 function showSection(sectionId) {
   document.getElementById('content-area').innerHTML = `
     <div id="all" class="section-title">📋 All Products</div>
@@ -1684,6 +1918,8 @@ function showSection(sectionId) {
   
   setTimeout(() => {
     const element = document.getElementById(sectionId);
-    if (element) element.scrollIntoView({behavior: 'smooth'});
+    if (element) {
+      element.scrollIntoView({behavior: 'smooth'});
+    }
   }, 100);
 }

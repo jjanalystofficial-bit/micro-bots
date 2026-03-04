@@ -37,6 +37,58 @@ const notificationSound = new Audio('/micro-bots/sounds/order-alert.mp3');
 // Configure the audio to loop
 notificationSound.loop = true;
 
+// ==================== HELPER FUNCTIONS FOR PHILIPPINE TIME ====================
+/**
+ * Get Philippine Time formatted for display
+ */
+function getPhilippineDisplayTime() {
+    const now = new Date();
+    const options = {
+        timeZone: 'Asia/Manila',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: true
+    };
+    return now.toLocaleString('en-PH', options);
+}
+
+/**
+ * Get Philippine Time ISO string for database
+ */
+function getPhilippineISOString() {
+    const now = new Date();
+    // Add 8 hours to convert UTC to Philippine Time
+    const phTime = new Date(now.getTime() + (8 * 60 * 60 * 1000));
+    // Return as ISO string but with Philippine Time
+    return phTime.toISOString().replace('Z', '+08:00');
+}
+
+/**
+ * Format any timestamp to Philippine Time display
+ */
+function formatToPhilippineTime(timestamp) {
+    try {
+        const date = new Date(timestamp);
+        const options = {
+            timeZone: 'Asia/Manila',
+            year: 'numeric',
+            month: '2-digit',
+            day: '2-digit',
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit',
+            hour12: true
+        };
+        return date.toLocaleString('en-PH', options);
+    } catch (e) {
+        return timestamp || 'Unknown';
+    }
+}
+
 /**
  * Start looping notification sound for new order
  */
@@ -78,7 +130,7 @@ function showVisualNotification(orderData = null) {
         notification.innerHTML = `
             <button class="close-btn" onclick="this.parentElement.remove(); window.stopNotification();">✖</button>
             <h4>🔔 NEW ORDER RECEIVED!</h4>
-            <p><strong>Order #${orderData.orderId}</strong></p>
+            <p><strong>Order ${orderData.orderId}</strong></p>
             <p>👤 Customer: ${orderData.customerName}</p>
             <p>💰 Total: ₱${orderData.total}</p>
             <p>📦 Items: ${orderData.items}</p>
@@ -129,7 +181,7 @@ function stopNotification() {
  */
 function showNewOrderConfirmation(orderData) {
     const message = `🛵 NEW ORDER RECEIVED!\n\n` +
-                    `Order #${orderData.orderId}\n` +
+                    `Order ${orderData.orderId}\n` +
                     `Customer: ${orderData.customerName}\n` +
                     `Total: ₱${orderData.total}\n` +
                     `Items: ${orderData.items} item(s)\n\n` +
@@ -1428,6 +1480,10 @@ async function confirmOrder() {
   const formattedPhone = currentUser.phone.toString().padStart(11, '0');
   const formattedCity = currentUser.city.toString();
   
+  // Get Philippine Time for timestamp
+  const philippineTimestamp = getPhilippineISOString();
+  const philippineDisplayTime = getPhilippineDisplayTime();
+  
   const order = {
     customerPhone: formattedPhone,
     customerName: currentUser.name || 'Unknown Customer',
@@ -1443,26 +1499,32 @@ async function confirmOrder() {
     address: document.getElementById("cust-address").value.trim(),
     city: formattedCity,
     status: 'pending',
-    timestamp: new Date().toISOString()
+    timestamp: philippineTimestamp, // Philippine Time ISO string
+    displayTime: philippineDisplayTime // Formatted Philippine Time for display
   };
   
   // Try Cloudflare Worker first
   let result = await apiRequest('api/orders', 'POST', order);
   
   if (result.status === 'success' || result.offline) {
-    // Save to localStorage
+    // Save to localStorage with ORD- prefix and Philippine Time
     const localOrder = {
-      id: Date.now(),
+      id: `ORD-${Date.now()}`, // Fixed: Added ORD- prefix
       ...order
     };
+    
+    // Ensure timestamp is Philippine Time
+    localOrder.timestamp = philippineTimestamp;
+    localOrder.displayTime = philippineDisplayTime;
+    
     orders.push(localOrder);
     localStorage.setItem('orders', JSON.stringify(orders));
     
-    // ===== 🔔 FIXED: ALWAYS trigger notification for admin, regardless of which page they're on =====
+    // ===== 🔔 FIXED: ALWAYS trigger notification for admin =====
     const isAdmin = currentUser?.isAdmin === true || currentUser?.isAdmin === 'true';
     
     const orderData = {
-        orderId: localOrder.id.toString().slice(-6),
+        orderId: localOrder.id, // Fixed: Use full ID with ORD- prefix
         customerName: localOrder.customerName,
         total: localOrder.total,
         items: localOrder.items.length,
@@ -1470,16 +1532,16 @@ async function confirmOrder() {
     };
     
     if (isAdmin) {
-      // If admin is placing order, notify immediately with a popup that appears NOW
+      // If admin is placing order, notify immediately
       setTimeout(() => {
         startNewOrderNotification(orderData);
         showNewOrderConfirmation(orderData);
-      }, 500); // Small delay to ensure order is saved first
+      }, 500);
     } else {
       // For customer orders, store for when admin logs in
       localStorage.setItem('pendingNewOrder', JSON.stringify(orderData));
       
-      // Also trigger notification if admin is currently logged in (maybe they're on another tab)
+      // Also trigger notification if admin is currently logged in
       if (currentUser && (currentUser.isAdmin === true || currentUser.isAdmin === 'true')) {
         startNewOrderNotification(orderData);
         showNewOrderConfirmation(orderData);
@@ -1548,11 +1610,11 @@ function showOrderHistory() {
       historyHTML += `
         <div class="order-card">
           <div class="order-header">
-            <span><strong>Order #${order.id?.toString().slice(-6) || 'N/A'}</strong></span>
+            <span><strong>Order ${order.id || 'N/A'}</strong></span> <!-- Fixed: Removed # and slice -->
             <span class="status-badge ${statusClass}">${statusInfo?.label || order.status}</span>
           </div>
           <div class="order-header">
-            <span>${new Date(order.timestamp).toLocaleString()}</span>
+            <span>${order.displayTime || formatToPhilippineTime(order.timestamp)}</span> <!-- Fixed: Philippine Time -->
           </div>
           
           ${renderOrderStatusTracker(order)}
@@ -1640,13 +1702,13 @@ function showAdminPanel() {
       
       adminHTML += `
         <tr>
-          <td>#${order.id?.toString().slice(-6) || 'N/A'}</td>
+          <td>${order.id || 'N/A'}</td> <!-- Fixed: Removed # and slice -->
           <td>${order.customerName}<br><small>${order.customerPhone}</small></td>
           <td>${order.items.map(i => `${i.qty}x ${i.name}`).join('<br>')}</td>
           <td>₱${order.total}</td>
           <td><span class="status-badge ${statusClass}">${statusInfo?.label || order.status}</span></td>
           <td>${actionButtons}</td>
-          <td>${new Date(order.timestamp).toLocaleString()}</td>
+          <td>${order.displayTime || formatToPhilippineTime(order.timestamp)}</td> <!-- Fixed: Philippine Time -->
         </tr>
       `;
     });
@@ -1923,17 +1985,17 @@ function showNotification(message) {
  */
 function showSection(sectionId) {
   document.getElementById('content-area').innerHTML = `
-    <div id="all" class="section-title">📋 All Products</div>
+    <div id="all" class="section-title">All Products</div>
     <div class="menu-container" id="all-products"></div>
-    <div id="chicken" class="section-title">🍗 Chicken Wings</div>
+    <div id="chicken" class="section-title">Chicken Wings</div>
     <div class="menu-container" id="chicken-products"></div>
-    <div id="sisig" class="section-title">🥘 Sisig</div>
+    <div id="sisig" class="section-title">Sisig</div>
     <div class="menu-container" id="sisig-products"></div>
-    <div id="ricemeal" class="section-title">🍚 Rice Meals</div>
+    <div id="ricemeal" class="section-title">Rice Meals</div>
     <div class="menu-container" id="ricemeal-products"></div>
-    <div id="drinks" class="section-title">🥤 Drinks</div>
+    <div id="drinks" class="section-title">Drinks</div>
     <div class="menu-container" id="drinks-products"></div>
-    <div id="snacks" class="section-title">🍟 Snacks</div>
+    <div id="snacks" class="section-title">Snacks</div>
     <div class="menu-container" id="snacks-products"></div>
   `;
   

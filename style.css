@@ -1192,4 +1192,73 @@ header {
 .save-stock-btn:hover {
   background: linear-gradient(135deg, #ffb300 0%, #ff8f00 100%) !important;
   transform: translateY(-2px);
+
+}
+
+@keyframes slideIn {
+    from {
+        transform: translateX(100%);
+        opacity: 0;
+    }
+    to {
+        transform: translateX(0);
+        opacity: 1;
+    }
+}
+
+.visual-notification {
+    position: fixed;
+    top: 20px;
+    right: 20px;
+    background: linear-gradient(135deg, #c62828, #b71c1c);
+    color: white;
+    padding: 20px 30px;
+    border-radius: 12px;
+    box-shadow: 0 8px 25px rgba(0,0,0,0.3);
+    z-index: 10000;
+    animation: slideIn 0.3s ease-out;
+    border-left: 6px solid #ffd700;
+    font-family: Arial, sans-serif;
+    min-width: 300px;
+    cursor: pointer;
+    transition: transform 0.2s;
+}
+
+.visual-notification:hover {
+    transform: scale(1.02);
+}
+
+.visual-notification h4 {
+    margin: 0 0 10px 0;
+    font-size: 18px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.visual-notification p {
+    margin: 5px 0;
+    font-size: 14px;
+    opacity: 0.9;
+}
+
+.visual-notification .close-btn {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    background: rgba(255,255,255,0.2);
+    border: none;
+    color: white;
+    width: 24px;
+    height: 24px;
+    border-radius: 12px;
+    cursor: pointer;
+    font-size: 16px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.visual-notification .close-btn:hover {
+    background: rgba(255,255,255,0.3);
 }

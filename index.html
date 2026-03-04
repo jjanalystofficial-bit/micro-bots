@@ -161,6 +161,14 @@
 <div class="sidebar">
   <h2>Sky Eats</h2>
   
+  <!-- 🔔 SOUND NOTIFICATION CONTROL (ADDED HERE) -->
+  <div class="sound-control" style="padding: 15px; text-align: center; border-bottom: 1px solid rgba(255, 215, 0, 0.3); margin-bottom: 10px;">
+    <button id="toggle-sound" class="sound-toggle-btn" onclick="toggleSound()" style="background: linear-gradient(135deg, #ffd700 0%, #ffb300 100%); color: #333; border: none; padding: 8px 15px; border-radius: 25px; cursor: pointer; font-weight: bold; width: 100%;">
+      🔔 Sound On
+    </button>
+    <div style="font-size: 11px; color: #ffd700; margin-top: 5px;">New order alerts</div>
+  </div>
+  
   <!-- User Info (shown when logged in) -->
   <div id="user-info-sidebar" class="user-info-sidebar" style="display: none;">
     <p id="sidebar-user-name"></p>
@@ -257,4 +265,3 @@
 <script src="script.js"></script>
 </body>
 </html>
-
